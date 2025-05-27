@@ -345,7 +345,7 @@ function App(){
 
         {/* Quantities */}
         <section className="bg-white p-4 rounded-xl shadow space-y-3">
-          <h2 className="font-semibold">Order Quantities</h2>
+          <h2 className="font-semibold">Order Quantities (Click the numbers to toggle on/off)</h2>
           <div className="flex flex-wrap gap-2">
             {quantities.sort((a, b) => a.value - b.value).map(qObj => (
               <button 
@@ -388,9 +388,9 @@ function App(){
         {/* Layout */}
         <section className="bg-white p-4 rounded-xl shadow">
           <h2 className="font-semibold mb-2">Piece layout</h2>
-          <div title="Units per press sheet" className="grid grid-cols-2 gap-4">
-            <Label>UP<Num value={UP} onChange={e=>setUP(e.target.value)}/></Label>
-            <Label title="Finished pieces per press sheet">OUT<Num value={OUT} onChange={e=>setOUT(e.target.value)}/></Label>
+          <div className="grid grid-cols-2 gap-4">
+            <Label>UP (Units per Cut Sheet)<Num value={UP} onChange={e=>setUP(e.target.value)}/></Label>
+            <Label>OUT(Units Per Press Sheet)<Num value={OUT} onChange={e=>setOUT(e.target.value)}/></Label>
           </div>
         </section>
 
