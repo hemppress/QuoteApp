@@ -85,14 +85,27 @@ function compute(params){
   const dieCost = params.includeDie ? dieVar + setup : 0;
 
   /* glue */
-  let glueRate=0, glueCostMarkup=0, glueCostEx=0;
-  if(params.glue.include){
-    glueRate = RATES.GLUE_MACHINES[params.glue.machine].rates[params.glue.mode];
-    const glueTotal = glueRate*effQty;
-    if(params.glue.machine==='HAND' && params.glue.atCost){
-      glueCostMarkup = Math.min(0.04*effQty, glueTotal);
-      glueCostEx     = glueTotal - glueCostMarkup;
-    }else glueCostMarkup = glueTotal;
+  let glueCostMarkup = 0;
+  let glueCostEx = 0; // Typically for 'at cost' portions
+
+  if (params.glue.include) {
+    if (params.glue.customRate && params.glue.customRate > 0) {
+      // If custom rate is provided, it overrides other calculations
+      glueCostMarkup = params.glue.customRate * effQty;
+      // Assuming custom rate is the final rate and should be part of markup base
+      glueCostEx = 0; 
+    } else {
+      // Original logic if no custom rate
+      const glueRate = RATES.GLUE_MACHINES[params.glue.machine].rates[params.glue.mode];
+      const glueTotal = glueRate * effQty;
+      if (params.glue.machine === 'HAND' && params.glue.atCost) {
+        glueCostMarkup = Math.min(0.04 * effQty, glueTotal);
+        glueCostEx = glueTotal - glueCostMarkup;
+      } else {
+        glueCostMarkup = glueTotal;
+        // glueCostEx remains 0 if not HAND and atCost
+      }
+    }
   }
 
   /* pre-press */
@@ -179,30 +192,28 @@ function App(){
   React.useEffect(() => {
     const savedTheme = localStorage.getItem('theme');
     if (savedTheme === 'dark') {
-      setDarkMode(true);
-      // It's important that the classes are applied here too,
-      // not just relying on the other useEffect, to prevent flicker.
       document.documentElement.classList.add('dark');
-      document.body.classList.add('dark');
+      setDarkMode(true);
     } else {
-      setDarkMode(false); 
-      // Ensure classes are removed if the saved theme is light or not present
+      // Default to light mode if no theme or if theme is 'light'
       document.documentElement.classList.remove('dark');
-      document.body.classList.remove('dark');
+      setDarkMode(false);
+      // Optionally, if no theme is found, set localStorage to 'light'
+      // if (!savedTheme) {
+      //   localStorage.setItem('theme', 'light');
+      // }
     }
-  }, []); 
+  }, []); // Empty dependency array ensures this runs only on mount
 
   React.useEffect(() => {
     if (darkMode) {
       document.documentElement.classList.add('dark');
-      document.body.classList.add('dark'); // Add this line
       localStorage.setItem('theme', 'dark');
     } else {
       document.documentElement.classList.remove('dark');
-      document.body.classList.remove('dark'); // Add this line
       localStorage.setItem('theme', 'light');
     }
-  }, [darkMode]); 
+  }, [darkMode]);
 
   const [UP,setUP]=React.useState(1);
   const [OUT,setOUT]=React.useState(1);
@@ -230,6 +241,7 @@ function App(){
   const [glueMachine,setGlueMachine]=React.useState('HAND');
   const [glueMode,setGlueMode]=React.useState('Fast');
   const [glueAtCost,setGlueAtCost]=React.useState(false);
+  const [customGlueRate, setCustomGlueRate] = React.useState(''); // Added this line
 
   /* Pre-press & margin */
   const [SKUs,setSKUs]=React.useState(1);
@@ -295,7 +307,8 @@ function App(){
       include:glueInclude,
       machine:glueMachine,
       mode:glueMode,
-      atCost:glueAtCost
+      atCost:glueAtCost,
+      customRate: customGlueRate ? +customGlueRate : null // Added this line
     },
     SKUs:+SKUs||1,
     includePrepress: includePrepress,
@@ -475,6 +488,9 @@ function App(){
               <select className="border rounded px-2 py-1" value={glueMode} onChange={e=>setGlueMode(e.target.value)}>
                 {Object.entries(RATES.GLUE_MACHINES[glueMachine].rates).map(([m,r])=><option key={m} value={m}>{m} – ${r.toFixed(2)}/pc</option>)}
               </select>
+            </Label>
+            <Label>Custom Glue $/pc
+              <Num value={customGlueRate} onChange={e => setCustomGlueRate(e.target.value)} placeholder="e.g., 0.10" />
             </Label>
             {glueMachine==='HAND'&&<label className="inline-flex items-center gap-2 text-sm"><input type="checkbox" checked={glueAtCost} onChange={e=>setGlueAtCost(e.target.checked)}/>Add glue at cost (first $0.04 in markup)</label>}
           </>}
