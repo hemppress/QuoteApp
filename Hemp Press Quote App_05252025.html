@@ -180,17 +180,26 @@ function App(){
     const savedTheme = localStorage.getItem('theme');
     if (savedTheme === 'dark') {
       setDarkMode(true);
+      // It's important that the classes are applied here too,
+      // not just relying on the other useEffect, to prevent flicker.
+      document.documentElement.classList.add('dark');
+      document.body.classList.add('dark');
     } else {
       setDarkMode(false); 
+      // Ensure classes are removed if the saved theme is light or not present
+      document.documentElement.classList.remove('dark');
+      document.body.classList.remove('dark');
     }
   }, []); 
 
   React.useEffect(() => {
     if (darkMode) {
       document.documentElement.classList.add('dark');
+      document.body.classList.add('dark'); // Add this line
       localStorage.setItem('theme', 'dark');
     } else {
       document.documentElement.classList.remove('dark');
+      document.body.classList.remove('dark'); // Add this line
       localStorage.setItem('theme', 'light');
     }
   }, [darkMode]); 
@@ -292,7 +301,18 @@ function App(){
     includePrepress: includePrepress,
     prepressOverrideCost: prepressOverrideCost !== '' ? +prepressOverrideCost : null, // Ensure empty string becomes null
     useMargin,
-    margin:+(marginCustom||marginPreset),
+    // margin:+(marginCustom||marginPreset), // This is the old line
+    // New margin logic:
+    margin: (() => {
+      let effectiveMargin = 0;
+      if (marginCustom) { // If custom margin input has a value
+        effectiveMargin = +marginCustom / 100;
+      } else {
+        effectiveMargin = +marginPreset;
+      }
+      // Cap the margin at 0.99 (99%)
+      return Math.min(effectiveMargin, 0.99);
+    })(),
     includeHandling,
     handleOverride,
     includeCustomCost: includeCustomCost,
