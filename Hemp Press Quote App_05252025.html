@@ -19,7 +19,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js" defer></script>
 </head>
-<body class="bg-slate-100 text-slate-800 dark:bg-slate-900 dark:text-slate-200">
+<body class="bg-slate-100 text-slate-800">
   <div id="root" class="container mx-auto p-6"></div>
 
   <script type="text/babel">
@@ -127,12 +127,10 @@ function compute(params){
 
   /* Custom Cost Calculation */
   let totalCustomCost = 0;
-  if (params.includeCustomCost && params.customCostValue > 0) {
-    if (params.customCostType === 'perPiece') {
-      totalCustomCost = params.customCostValue * params.qty; 
-    } else { // oneTime
-      totalCustomCost = params.customCostValue; 
-    }
+  if (params.includeCustomCost) {
+    const perPieceCost = params.customCostPerPiece * params.qty; 
+    const setupCost = params.customCostSetup; 
+    totalCustomCost = perPieceCost + setupCost;
   }
 
   function sideTotals(printCostSide){
@@ -152,7 +150,8 @@ function compute(params){
       handling:handlingCost/params.qty
     };
 
-    if (params.includeCustomCost && params.customCostValue > 0) {
+    // Ensure custom cost is only added to breakdown if it's greater than zero
+    if (params.includeCustomCost && totalCustomCost > 0) {
       const keyForCustomCost = params.customCostName || 'Custom Cost';
       costBreak[keyForCustomCost] = totalCustomCost / params.qty;
     }
@@ -185,35 +184,32 @@ const Num = props=><input type="number" className="border rounded px-2 py-1 w-fu
 /* =========== APP =========== */
 function App(){
   /* STATE */
-  const [darkMode, setDarkMode] = React.useState(false);
+  // const [darkMode, setDarkMode] = React.useState(false); // Removed
   const [quantities,setQuantities]=React.useState(RATES.QTY_PRESETS.map(q => ({ value: q, active: true, isDefault: true })));
   const [customQty,setCustomQty]=React.useState('');
 
-  React.useEffect(() => {
-    const savedTheme = localStorage.getItem('theme');
-    if (savedTheme === 'dark') {
-      document.documentElement.classList.add('dark');
-      setDarkMode(true);
-    } else {
-      // Default to light mode if no theme or if theme is 'light'
-      document.documentElement.classList.remove('dark');
-      setDarkMode(false);
-      // Optionally, if no theme is found, set localStorage to 'light'
-      // if (!savedTheme) {
-      //   localStorage.setItem('theme', 'light');
-      // }
-    }
-  }, []); // Empty dependency array ensures this runs only on mount
+  // React.useEffect(() => { // Removed
+  //   const savedTheme = localStorage.getItem('theme');
+  //   if (savedTheme === 'dark') {
+  //     document.documentElement.classList.add('dark');
+  //     setDarkMode(true);
+  //   } else {
+  //     document.documentElement.classList.remove('dark');
+  //     setDarkMode(false);
+  //   }
+  // }, []);
 
-  React.useEffect(() => {
-    if (darkMode) {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('theme', 'dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('theme', 'light');
-    }
-  }, [darkMode]);
+  // React.useEffect(() => { // Removed
+  //   if (darkMode) {
+  //     document.documentElement.classList.add('dark');
+  //     localStorage.setItem('theme', 'dark');
+  //     console.log('Dark mode enabled, <html> classes:', document.documentElement.className);
+  //   } else {
+  //     document.documentElement.classList.remove('dark');
+  //     localStorage.setItem('theme', 'light');
+  //     console.log('Dark mode disabled, <html> classes:', document.documentElement.className);
+  //   }
+  // }, [darkMode]);
 
   const [UP,setUP]=React.useState(1);
   const [OUT,setOUT]=React.useState(1);
@@ -241,7 +237,7 @@ function App(){
   const [glueMachine,setGlueMachine]=React.useState('HAND');
   const [glueMode,setGlueMode]=React.useState('Fast');
   const [glueAtCost,setGlueAtCost]=React.useState(false);
-  const [customGlueRate, setCustomGlueRate] = React.useState(''); // Added this line
+  const [customGlueRate, setCustomGlueRate] = React.useState('');
 
   /* Pre-press & margin */
   const [SKUs,setSKUs]=React.useState(1);
@@ -259,7 +255,7 @@ function App(){
   const [includeCustomCost, setIncludeCustomCost] = React.useState(false);
   const [customCostName, setCustomCostNameState] = React.useState(''); 
   const [customCostValue, setCustomCostValueState] = React.useState(''); 
-  const [customCostType, setCustomCostType] = React.useState('perPiece'); 
+  const [customCostSetup, setCustomCostSetup] = React.useState(''); 
 
 
   const handleAddCustomPaper = () => {
@@ -308,30 +304,27 @@ function App(){
       machine:glueMachine,
       mode:glueMode,
       atCost:glueAtCost,
-      customRate: customGlueRate ? +customGlueRate : null // Added this line
+      customRate: customGlueRate ? +customGlueRate : null
     },
     SKUs:+SKUs||1,
     includePrepress: includePrepress,
-    prepressOverrideCost: prepressOverrideCost !== '' ? +prepressOverrideCost : null, // Ensure empty string becomes null
+    prepressOverrideCost: prepressOverrideCost !== '' ? +prepressOverrideCost : null,
     useMargin,
-    // margin:+(marginCustom||marginPreset), // This is the old line
-    // New margin logic:
     margin: (() => {
       let effectiveMargin = 0;
-      if (marginCustom) { // If custom margin input has a value
+      if (marginCustom) { 
         effectiveMargin = +marginCustom / 100;
       } else {
         effectiveMargin = +marginPreset;
       }
-      // Cap the margin at 0.99 (99%)
       return Math.min(effectiveMargin, 0.99);
     })(),
     includeHandling,
     handleOverride,
     includeCustomCost: includeCustomCost,
     customCostName: customCostName, 
-    customCostValue: customCostValue ? +customCostValue : 0, 
-    customCostType: customCostType,
+    customCostPerPiece: customCostValue ? +customCostValue : 0, 
+    customCostSetup: customCostSetup ? +customCostSetup : 0,   
   });
 
   /* COPY-TABLE makers */
@@ -351,10 +344,8 @@ function App(){
       const p = baseParams(qObj.value);
       if (side === 'one') {
         p.printOverride1Sided = RATES.LOWEST_PRINT['1'];
-        // For a 1-sided low-cost quote, the second side's printing cost should effectively be zero.
-        // Setting printOverride2Sided = 0 ensures that print2 in compute() becomes 0 if includePrint is true.
         p.printOverride2Sided = 0; 
-      } else { // side === 'two'
+      } else { 
         p.printOverride1Sided = RATES.LOWEST_PRINT['1'];
         p.printOverride2Sided = RATES.LOWEST_PRINT['2'];
       }
@@ -364,13 +355,7 @@ function App(){
   /* UI */
   return(
     <>
-      <button
-        onClick={() => setDarkMode(!darkMode)}
-        className="fixed top-4 right-4 z-50 px-3 py-2 rounded-md text-sm font-medium bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 shadow"
-        aria-label="Toggle light and dark mode"
-      >
-        {darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-      </button>
+      {/* Dark Mode Toggle Button Removed */}
       <div className="grid md:grid-cols-2 gap-8">
         {/* ===== COSTING ===== */}
         <div className="space-y-6">
@@ -520,29 +505,12 @@ function App(){
                   className="border rounded px-2 py-1 w-full" 
                 />
               </Label>
-              <Label>Custom Cost Value
+              <Label>Custom Cost / pc
                 <Num value={customCostValue} onChange={e => setCustomCostValueState(e.target.value)} />
               </Label>
-              <div className="flex gap-4 text-sm">
-                <label className="flex items-center gap-1">
-                  <input 
-                    type="radio" 
-                    name="customCostType" 
-                    value="perPiece" 
-                    checked={customCostType === 'perPiece'} 
-                    onChange={() => setCustomCostType('perPiece')} 
-                  /> Per Piece
-                </label>
-                <label className="flex items-center gap-1">
-                  <input 
-                    type="radio" 
-                    name="customCostType" 
-                    value="oneTime" 
-                    checked={customCostType === 'oneTime'} 
-                    onChange={() => setCustomCostType('oneTime')} 
-                  /> One-Time (per order)
-                </label>
-              </div>
+              <Label>Custom Cost Setup / Order
+                <Num value={customCostSetup} onChange={e => setCustomCostSetup(e.target.value)} placeholder="e.g., 50" />
+              </Label>
             </div>
           )}
         </section>
@@ -609,6 +577,17 @@ function App(){
               .map(item => `${item.name}: ${item.percentage.toFixed(1)}%`)
               .join(' + ');
           }
+
+          const totalCostPerPieceTwo = Object.values(res.two.costBreak).reduce((a, b) => a + b, 0);
+          
+          const currentParams = baseParams(q);
+          const actualMarginUsed = currentParams.useMargin ? currentParams.margin : 0;
+          
+          const earningsPerPcOne = res.one.sellPc - totalCostPerPieceOne;
+          const earningsTotalOne = earningsPerPcOne * q;
+      
+          const earningsPerPcTwo = res.two.sellPc - totalCostPerPieceTwo;
+          const earningsTotalTwo = earningsPerPcTwo * q;
           
           return(
             <motion.div key={q} className="bg-white p-6 rounded-xl shadow space-y-2" initial={{opacity:0,y:20}} animate={{opacity:1,y:0}}>
@@ -629,7 +608,30 @@ function App(){
               <p className="text-xs text-slate-500 mt-1">
                 Contribution: {percentageBreakdownStringOne}
               </p>
-            )}
+              )}
+              <div className="mt-2 pt-2 border-t border-slate-200">
+                <h4 className="font-semibold text-sm mt-1">Earnings Details (1-Sided):</h4>
+                <p className="text-xs text-slate-600">
+                  Actual Margin %: {(actualMarginUsed * 100).toFixed(0)}%
+                </p>
+                <p className="text-xs text-slate-600">
+                  Earnings $/pc: ${earningsPerPcOne.toFixed(2)}
+                </p>
+                <p className="text-xs text-slate-600">
+                  Earnings Total: ${earningsTotalOne.toFixed(2)}
+                </p>
+
+                <h4 className="font-semibold text-sm mt-1">Earnings Details (2-Sided):</h4>
+                <p className="text-xs text-slate-600">
+                  Actual Margin %: {(actualMarginUsed * 100).toFixed(0)}%
+                </p>
+                <p className="text-xs text-slate-600">
+                  Earnings $/pc: ${earningsPerPcTwo.toFixed(2)}
+                </p>
+                <p className="text-xs text-slate-600">
+                  Earnings Total: ${earningsTotalTwo.toFixed(2)}
+                </p>
+              </div>
             </motion.div>
           );
         })}
