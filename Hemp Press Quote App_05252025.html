@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="">
 <head>
   <meta charset="UTF-8" />
   <title>Cost Calculator</title>
@@ -19,7 +19,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js" defer></script>
 </head>
-<body class="bg-slate-100 text-slate-800">
+<body class="bg-slate-100 text-slate-800 dark:bg-slate-900 dark:text-slate-200">
   <div id="root" class="container mx-auto p-6"></div>
 
   <script type="text/babel">
@@ -71,8 +71,8 @@ function compute(params){
   const paperCost=pressSheets*params.paper.cost;
 
   /* printing cost per side (may be zero if printing disabled) */
-  const printCostPS = params.includePrint ? (params.printOverride ?? tierPrice(pressSheets,'1')) : 0;
-  const printCostPS2= params.includePrint ? (params.printOverride ?? tierPrice(pressSheets,'2')) : 0;
+  const printCostPS = params.includePrint ? (params.printOverride1Sided ?? tierPrice(pressSheets,'1')) : 0;
+  const printCostPS2= params.includePrint ? (params.printOverride2Sided ?? tierPrice(pressSheets,'2')) : 0;
   const print1=pressSheets*printCostPS;
   const print2=pressSheets*printCostPS2;
 
@@ -95,8 +95,15 @@ function compute(params){
     }else glueCostMarkup = glueTotal;
   }
 
-  /* pre-press (always outside markup) */
-  const preCost = 65 + Math.max(0,params.SKUs-1)*35;
+  /* pre-press */
+  let preCost = 0;
+  if (params.includePrepress) {
+    if (params.prepressOverrideCost !== null) { // baseParams ensures empty string '' becomes null
+      preCost = params.prepressOverrideCost; 
+    } else {
+      preCost = 65 + Math.max(0, params.SKUs - 1) * 35;
+    }
+  }
 
   /* handling */
   const handlingRate = params.includeHandling ? (params.handleOverride!==''?+params.handleOverride:(params.OUT<=5?0.02:0)) : 0;
@@ -105,8 +112,18 @@ function compute(params){
   /* margin logic */
   const margin = params.useMargin?params.margin:0;
 
-  function sideTotals(printCost){
-    const markupBase = (params.paperAtCost?0:paperCost)+printCost+dieCost+glueCostMarkup;
+  /* Custom Cost Calculation */
+  let totalCustomCost = 0;
+  if (params.includeCustomCost && params.customCostValue > 0) {
+    if (params.customCostType === 'perPiece') {
+      totalCustomCost = params.customCostValue * params.qty; 
+    } else { // oneTime
+      totalCustomCost = params.customCostValue; 
+    }
+  }
+
+  function sideTotals(printCostSide){
+    const markupBase = (params.paperAtCost?0:paperCost) + printCostSide + dieCost + glueCostMarkup + totalCustomCost; 
     const excluded   = (params.paperAtCost?paperCost:0)+glueCostEx+preCost+handlingCost;
     const sellPcRaw  = (markupBase/(1-margin)+excluded)/params.qty;
     const sellPc     = round2(sellPcRaw);
@@ -114,7 +131,7 @@ function compute(params){
 
     const costBreak={
       paper:paperCost/params.qty,
-      print:printCost/params.qty,
+      print:printCostSide/params.qty,
       die:dieCost/params.qty,
       strip:params.windows?stripPerPc:0,
       glue:(glueCostMarkup+glueCostEx)/params.qty,
@@ -122,6 +139,11 @@ function compute(params){
       handling:handlingCost/params.qty
     };
 
+    if (params.includeCustomCost && params.customCostValue > 0) {
+      const keyForCustomCost = params.customCostName || 'Custom Cost';
+      costBreak[keyForCustomCost] = totalCustomCost / params.qty;
+    }
+    
     return {sellPc,sellTotal,costBreak};
   }
 
@@ -136,7 +158,7 @@ function bestBreaks(OUT){
   const set=new Set();
   ['1','2'].forEach(s=>{
     RATES.PRINT_TIERS[s].slice(1).forEach(t=>{
-      const pcs=ceil((t.min*OUT)/1.10/100)*100; // next 100
+      const pcs=ceil((t.min*OUT)/1.10/100)*100; 
       set.add(pcs);
     });
   });
@@ -150,8 +172,28 @@ const Num = props=><input type="number" className="border rounded px-2 py-1 w-fu
 /* =========== APP =========== */
 function App(){
   /* STATE */
-  const [quantities,setQuantities]=React.useState([...RATES.QTY_PRESETS]);
+  const [darkMode, setDarkMode] = React.useState(false);
+  const [quantities,setQuantities]=React.useState(RATES.QTY_PRESETS.map(q => ({ value: q, active: true, isDefault: true })));
   const [customQty,setCustomQty]=React.useState('');
+
+  React.useEffect(() => {
+    const savedTheme = localStorage.getItem('theme');
+    if (savedTheme === 'dark') {
+      setDarkMode(true);
+    } else {
+      setDarkMode(false); 
+    }
+  }, []); 
+
+  React.useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
+    }
+  }, [darkMode]); 
 
   const [UP,setUP]=React.useState(1);
   const [OUT,setOUT]=React.useState(1);
@@ -159,10 +201,13 @@ function App(){
   const [papers,setPapers]=React.useState([...RATES.PAPERS]);
   const [paperIdx,setPaperIdx]=React.useState(0);
   const [paperAtCost,setPaperAtCost]=React.useState(false);
+  const [customPaperName, setCustomPaperName] = React.useState('');
+  const [customPaperPrice, setCustomPaperPrice] = React.useState('');
 
   /* Printing */
   const [includePrint,setIncludePrint]=React.useState(true);
-  const [printOverride,setPrintOverride]=React.useState('');
+  const [printOverride1Sided,setPrintOverride1Sided]=React.useState('');
+  const [printOverride2Sided,setPrintOverride2Sided]=React.useState('');
 
   /* Die */
   const [includeDie,setIncludeDie]=React.useState(true);
@@ -179,6 +224,8 @@ function App(){
 
   /* Pre-press & margin */
   const [SKUs,setSKUs]=React.useState(1);
+  const [includePrepress, setIncludePrepress] = React.useState(true);
+  const [prepressOverrideCost, setPrepressOverrideCost] = React.useState('');
   const [useMargin,setUseMargin]=React.useState(true);
   const [marginPreset,setMarginPreset]=React.useState('0.60');
   const [marginCustom,setMarginCustom]=React.useState('');
@@ -186,6 +233,37 @@ function App(){
   /* Handling */
   const [includeHandling,setIncludeHandling]=React.useState(true);
   const [handleOverride,setHandleOverride]=React.useState('');
+
+  /* Custom Cost Add-On */
+  const [includeCustomCost, setIncludeCustomCost] = React.useState(false);
+  const [customCostName, setCustomCostNameState] = React.useState(''); 
+  const [customCostValue, setCustomCostValueState] = React.useState(''); 
+  const [customCostType, setCustomCostType] = React.useState('perPiece'); 
+
+
+  const handleAddCustomPaper = () => {
+    if (customPaperName && customPaperPrice) {
+      const newPaperCost = parseFloat(customPaperPrice);
+      if (isNaN(newPaperCost)) {
+        alert('Please enter a valid price for the custom paper.');
+        return;
+      }
+      const newPaper = {
+        id: customPaperName.toLowerCase().replace(/\s+/g, '-'),
+        label: `${customPaperName} — $${newPaperCost.toFixed(2)}/PS`,
+        cost: newPaperCost
+      };
+      setPapers(prevPapers => {
+        const updatedPapers = [...prevPapers, newPaper];
+        setPaperIdx(updatedPapers.length - 1); 
+        return updatedPapers;
+      });
+      setCustomPaperName('');
+      setCustomPaperPrice('');
+    } else {
+      alert('Please enter both name and price for the custom paper.');
+    }
+  };
 
   /* PARAMS helper */
   const baseParams=q=>({
@@ -195,7 +273,8 @@ function App(){
     paper:papers[paperIdx],
     paperAtCost,
     includePrint,
-    printOverride:printOverride?+printOverride:null,
+    printOverride1Sided:printOverride1Sided?+printOverride1Sided:null,
+    printOverride2Sided:printOverride2Sided?+printOverride2Sided:null,
     includeDie,
     die:{
       machine:dieMachine,
@@ -210,51 +289,108 @@ function App(){
       atCost:glueAtCost
     },
     SKUs:+SKUs||1,
+    includePrepress: includePrepress,
+    prepressOverrideCost: prepressOverrideCost !== '' ? +prepressOverrideCost : null, // Ensure empty string becomes null
     useMargin,
     margin:+(marginCustom||marginPreset),
     includeHandling,
     handleOverride,
+    includeCustomCost: includeCustomCost,
+    customCostName: customCostName, 
+    customCostValue: customCostValue ? +customCostValue : 0, 
+    customCostType: customCostType,
   });
 
   /* COPY-TABLE makers */
-  const fmtLines=(side)=>quantities.map(q=>`${q.toLocaleString().padEnd(7,' ')} ........... $${compute(baseParams(q))[side].sellPc.toFixed(2)}`).join('\n');
+  const fmtLines=(side)=>quantities
+    .filter(qObj => qObj.active)
+    .map(qObj => `${qObj.value.toLocaleString().padEnd(7,' ')} ........... $${compute(baseParams(qObj.value))[side].sellPc.toFixed(2)}`)
+    .join('\n');
 
   /* BEST PRICE lines */
   const bestQs=bestBreaks(OUT);
   const bestLines=(side)=>bestQs.map(q=>`${q.toLocaleString().padEnd(7,' ')} ........... $${compute(baseParams(q))[side].sellPc.toFixed(2)}`).join('\n');
 
   /* LOW COST tables (force lowest tier) */
-  const lowLines=(side)=>quantities.map(q=>{
-    const p=baseParams(q);
-    p.printOverride=RATES.LOWEST_PRINT[side==='one'?'1':'2'];
-    return `${q.toLocaleString().padEnd(7,' ')} ........... $${compute(p)[side].sellPc.toFixed(2)}`;
-  }).join('\n');
+  const lowLines=(side)=>quantities
+    .filter(qObj => qObj.active)
+    .map(qObj =>{
+      const p = baseParams(qObj.value);
+      if (side === 'one') {
+        p.printOverride1Sided = RATES.LOWEST_PRINT['1'];
+        // For a 1-sided low-cost quote, the second side's printing cost should effectively be zero.
+        // Setting printOverride2Sided = 0 ensures that print2 in compute() becomes 0 if includePrint is true.
+        p.printOverride2Sided = 0; 
+      } else { // side === 'two'
+        p.printOverride1Sided = RATES.LOWEST_PRINT['1'];
+        p.printOverride2Sided = RATES.LOWEST_PRINT['2'];
+      }
+      return `${qObj.value.toLocaleString().padEnd(7,' ')} ........... $${compute(p)[side].sellPc.toFixed(2)}`;
+    }).join('\n');
 
   /* UI */
   return(
-    <div className="grid md:grid-cols-2 gap-8">
-      {/* ===== COSTING ===== */}
-      <div className="space-y-6">
+    <>
+      <button
+        onClick={() => setDarkMode(!darkMode)}
+        className="fixed top-4 right-4 z-50 px-3 py-2 rounded-md text-sm font-medium bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200 hover:bg-slate-300 dark:hover:bg-slate-600 shadow"
+        aria-label="Toggle light and dark mode"
+      >
+        {darkMode ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+      </button>
+      <div className="grid md:grid-cols-2 gap-8">
+        {/* ===== COSTING ===== */}
+        <div className="space-y-6">
         <h1 className="text-2xl font-bold">Custom Costing</h1>
 
         {/* Quantities */}
         <section className="bg-white p-4 rounded-xl shadow space-y-3">
           <h2 className="font-semibold">Order Quantities</h2>
           <div className="flex flex-wrap gap-2">
-            {RATES.QTY_PRESETS.map(b=><button key={b} className="px-3 py-1 bg-slate-200 rounded hover:bg-slate-300" onClick={()=>setQuantities(q=>q.includes(b)?q:[...q,b].sort((a,b)=>a-b))}>{b.toLocaleString()}</button>)}
+            {quantities.sort((a, b) => a.value - b.value).map(qObj => (
+              <button 
+                key={qObj.value} 
+                className={`px-3 py-1 rounded hover:bg-slate-300 ${qObj.active ? 'bg-indigo-500 text-white hover:bg-indigo-600' : 'bg-slate-200'}`}
+                onClick={() => setQuantities(prevQuantities => 
+                  prevQuantities.map(item => 
+                    item.value === qObj.value ? { ...item, active: !item.active } : item
+                  )
+                )}
+              >
+                {qObj.value.toLocaleString()}
+              </button>
+            ))}
           </div>
           <div className="flex gap-2">
-            <Num value={customQty} onChange={e=>setCustomQty(e.target.value)}/>
-            <button className="px-3 py-1 bg-indigo-500 text-white rounded" onClick={()=>{if(customQty){setQuantities(q=>[...q,+customQty].sort((a,b)=>a-b));setCustomQty('')}}}>Add</button>
+            <Num value={customQty} onChange={e=>setCustomQty(e.target.value)} placeholder="Enter custom qty"/>
+            <button 
+              className="px-3 py-1 bg-indigo-500 text-white rounded hover:bg-indigo-600" 
+              onClick={() => {
+                if (customQty) {
+                  const numQty = +customQty;
+                  setQuantities(prevQs => {
+                    const existingQty = prevQs.find(q => q.value === numQty);
+                    if (existingQty) {
+                      return prevQs.map(q => q.value === numQty ? { ...q, active: true } : q);
+                    } else {
+                      return [...prevQs, { value: numQty, active: true, isDefault: false }].sort((a,b) => a.value - b.value);
+                    }
+                  });
+                  setCustomQty('');
+                }
+              }}
+            >
+              Add
+            </button>
           </div>
         </section>
 
         {/* Layout */}
         <section className="bg-white p-4 rounded-xl shadow">
           <h2 className="font-semibold mb-2">Piece layout</h2>
-          <div className="grid grid-cols-2 gap-4">
+          <div title="Units per press sheet" className="grid grid-cols-2 gap-4">
             <Label>UP<Num value={UP} onChange={e=>setUP(e.target.value)}/></Label>
-            <Label>OUT<Num value={OUT} onChange={e=>setOUT(e.target.value)}/></Label>
+            <Label title="Finished pieces per press sheet">OUT<Num value={OUT} onChange={e=>setOUT(e.target.value)}/></Label>
           </div>
         </section>
 
@@ -265,19 +401,37 @@ function App(){
             {papers.map((p,i)=><option key={p.id} value={i}>{p.label}</option>)}
           </select>
           <label className="inline-flex items-center gap-2 text-sm"><input type="checkbox" checked={paperAtCost} onChange={e=>setPaperAtCost(e.target.checked)}/>Add paper at cost (exclude markup)</label>
+          <div className="mt-4 space-y-2">
+            <h3 className="font-semibold text-sm">Add Custom Paper</h3>
+            <Label>Paper Name
+              <input type="text" value={customPaperName} onChange={e => setCustomPaperName(e.target.value)} className="border rounded px-2 py-1 w-full" />
+            </Label>
+            <Label>Price per Press Sheet
+              <Num value={customPaperPrice} onChange={e => setCustomPaperPrice(e.target.value)} />
+            </Label>
+            <button
+              onClick={handleAddCustomPaper}
+              className="px-3 py-1 bg-indigo-500 text-white rounded hover:bg-indigo-600 text-sm"
+            >
+              Add Custom Paper
+            </button>
+          </div>
         </section>
 
         {/* Printing */}
         <section className="bg-white p-4 rounded-xl shadow space-y-2">
           <label className="flex items-center gap-2 font-semibold"><input type="checkbox" checked={includePrint} onChange={e=>setIncludePrint(e.target.checked)}/>Include printing</label>
-          {includePrint&&<Label>Override cost / Press-Sheet <Num value={printOverride} onChange={e=>setPrintOverride(e.target.value)}/></Label>}
+          {includePrint&&<>
+            <Label>Override cost / Press-Sheet – 1 Sided <Num value={printOverride1Sided} onChange={e=>setPrintOverride1Sided(e.target.value)}/></Label>
+            <Label>Override cost / Press-Sheet – 2 Sided <Num value={printOverride2Sided} onChange={e=>setPrintOverride2Sided(e.target.value)}/></Label>
+          </>}
         </section>
 
         {/* Die */}
         <section className="bg-white p-4 rounded-xl shadow space-y-2">
           <label className="flex items-center gap-2 font-semibold"><input type="checkbox" checked={includeDie} onChange={e=>setIncludeDie(e.target.checked)}/>Include die-cutting</label>
           {includeDie&&<>
-            <Label>Machine
+            <Label>Select Machine
               <select className="border rounded px-2 py-1" value={dieMachine} onChange={e=>setDieMachine(e.target.value)}>
                 {Object.entries(RATES.DIE_MACHINES).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
               </select>
@@ -305,12 +459,76 @@ function App(){
             {glueMachine==='HAND'&&<label className="inline-flex items-center gap-2 text-sm"><input type="checkbox" checked={glueAtCost} onChange={e=>setGlueAtCost(e.target.checked)}/>Add glue at cost (first $0.04 in markup)</label>}
           </>}
         </section>
+        
+        {/* Handling */}
+        <section className="bg-white p-4 rounded-xl shadow space-y-2">
+          <label className="flex items-center gap-2 font-semibold"><input type="checkbox" checked={includeHandling} onChange={e=>setIncludeHandling(e.target.checked)}/>Include handling</label>
+          {includeHandling&&<Label>Cost / piece<Num value={handleOverride} onChange={e=>setHandleOverride(e.target.value)}/></Label>}
+          <p className="text-xs text-slate-500">Default $0.02 / pc when OUT ≤ 5</p>
+        </section>
+
+        {/* Custom Cost Section */}
+        <section className="bg-white p-4 rounded-xl shadow space-y-2">
+          <label className="flex items-center gap-2 font-semibold">
+            <input type="checkbox" checked={includeCustomCost} onChange={e => setIncludeCustomCost(e.target.checked)} />
+            Enable Custom Cost
+          </label>
+          {includeCustomCost && (
+            <div className="space-y-2 pt-2">
+              <Label>Custom Name
+                <input 
+                  type="text" 
+                  value={customCostName} 
+                  onChange={e => setCustomCostNameState(e.target.value)} 
+                  placeholder="e.g., Packing Fee" 
+                  className="border rounded px-2 py-1 w-full" 
+                />
+              </Label>
+              <Label>Custom Cost Value
+                <Num value={customCostValue} onChange={e => setCustomCostValueState(e.target.value)} />
+              </Label>
+              <div className="flex gap-4 text-sm">
+                <label className="flex items-center gap-1">
+                  <input 
+                    type="radio" 
+                    name="customCostType" 
+                    value="perPiece" 
+                    checked={customCostType === 'perPiece'} 
+                    onChange={() => setCustomCostType('perPiece')} 
+                  /> Per Piece
+                </label>
+                <label className="flex items-center gap-1">
+                  <input 
+                    type="radio" 
+                    name="customCostType" 
+                    value="oneTime" 
+                    checked={customCostType === 'oneTime'} 
+                    onChange={() => setCustomCostType('oneTime')} 
+                  /> One-Time (per order)
+                </label>
+              </div>
+            </div>
+          )}
+        </section>
 
         {/* Pre-press */}
-        <section className="bg-white p-4 rounded-xl shadow space-y-1">
+        <section className="bg-white p-4 rounded-xl shadow space-y-2">
           <h2 className="font-semibold">Pre-press / proofing</h2>
-          <Label># of SKUs<Num value={SKUs} min={1} onChange={e=>setSKUs(e.target.value)}/></Label>
-          <p className="text-xs text-slate-500">Cost = Base $65 + $35 per extra SKU (after markup, always included)</p>
+          <label className="flex items-center gap-2 font-semibold">
+            <input type="checkbox" checked={includePrepress} onChange={e => setIncludePrepress(e.target.checked)} />
+            Include Pre-press / Proofing
+          </label>
+          {includePrepress && (
+            <>
+              <Label>Override Pre-press Cost ($)
+                <Num value={prepressOverrideCost} onChange={e => setPrepressOverrideCost(e.target.value)} placeholder="e.g., 100" />
+              </Label>
+              <Label># of SKUs (used if override is not set)
+                <Num value={SKUs} min={1} onChange={e=>setSKUs(e.target.value)}/>
+              </Label>
+              <p className="text-xs text-slate-500">Original logic: Base $65 + $35 per extra SKU. If override is set, SKU count is ignored for pre-press cost.</p>
+            </>
+          )}
         </section>
 
         {/* Margin */}
@@ -324,21 +542,38 @@ function App(){
           </>}
         </section>
 
-        {/* Handling */}
-        <section className="bg-white p-4 rounded-xl shadow space-y-2">
-          <label className="flex items-center gap-2 font-semibold"><input type="checkbox" checked={includeHandling} onChange={e=>setIncludeHandling(e.target.checked)}/>Include handling</label>
-          {includeHandling&&<Label>Cost / piece<Num value={handleOverride} onChange={e=>setHandleOverride(e.target.value)}/></Label>}
-          <p className="text-xs text-slate-500">Default $0.02 / pc when OUT ≤ 5</p>
-        </section>
       </div>
 
       {/* ===== PRICING ===== */}
       <div className="space-y-6">
         <h1 className="text-2xl font-bold">Custom Pricing</h1>
 
-        {quantities.map(q=>{
+        {quantities.filter(qObj => qObj.active).map(qObj => { 
+          const q = qObj.value;
           const res=compute(baseParams(q));
-          const {one,two,addOn,costBreak}= {...res.one, addOn:res.addOn};
+          const {one,two,addOn}=res; 
+          
+          const totalCostPerPieceOne = Object.values(res.one.costBreak).reduce((a, b) => a + b, 0);
+          const costBreakdownStringOne = Object.entries(res.one.costBreak)
+            .filter(([key, value]) => value > 0.000001) 
+            .map(([key, value]) => `${key.charAt(0).toUpperCase() + key.slice(1)}: $${value.toFixed(4)}`)
+            .join(' + ');
+
+          let percentageBreakdownStringOne = '';
+          if (totalCostPerPieceOne > 0) {
+            const costPercentagesOne = Object.entries(res.one.costBreak)
+              .filter(([key, value]) => value > 0.000001) 
+              .map(([key, value]) => ({
+                name: key.charAt(0).toUpperCase() + key.slice(1),
+                percentage: (value / totalCostPerPieceOne) * 100,
+              }))
+              .sort((a, b) => b.percentage - a.percentage); 
+
+            percentageBreakdownStringOne = costPercentagesOne
+              .map(item => `${item.name}: ${item.percentage.toFixed(1)}%`)
+              .join(' + ');
+          }
+          
           return(
             <motion.div key={q} className="bg-white p-6 rounded-xl shadow space-y-2" initial={{opacity:0,y:20}} animate={{opacity:1,y:0}}>
               <h3 className="text-lg font-semibold">{q.toLocaleString()} pcs</h3>
@@ -351,7 +586,14 @@ function App(){
               </table>
               <p className="text-sm">2-Sided add-on: +${addOn.toFixed(2)} / pc</p>
               <p className="text-xs text-slate-500">Press-sheets incl. overage: {res.pressSheets}</p>
-              <p className="text-xs text-slate-500">Costs / pc: Paper ${res.one.costBreak.paper.toFixed(4)} + Print ${res.one.costBreak.print.toFixed(4)} + Die ${res.one.costBreak.die.toFixed(4)} + Strip ${res.one.costBreak.strip.toFixed(4)} + Glue ${res.one.costBreak.glue.toFixed(4)} + Pre ${res.one.costBreak.pre.toFixed(4)} + Handling ${res.one.costBreak.handling.toFixed(4)} = ${(Object.values(res.one.costBreak).reduce((a,b)=>a+b,0)).toFixed(4)}</p>
+              <p className="text-xs text-slate-500">
+                Costs / pc (1-Sided): {costBreakdownStringOne} = ${totalCostPerPieceOne.toFixed(4)}
+              </p>
+              {percentageBreakdownStringOne && (
+              <p className="text-xs text-slate-500 mt-1">
+                Contribution: {percentageBreakdownStringOne}
+              </p>
+            )}
             </motion.div>
           );
         })}
@@ -390,6 +632,7 @@ function App(){
         </div>
       </div>
     </div>
+    </>
   );
 }
 
