@@ -192,10 +192,42 @@ const Num = props => <input type="number" className="border rounded px-2 py-1 w-
 
 /* =========== APP =========== */
 function App() {
+  const STYLE_OPTIONS = [
+    'RTE (Reverse Tuck End)', 'STE (Straight Tuck End)', 'ATAB (Auto Tuck Auto Bottom)',
+    'TTAB (Top Tuck Auto Bottom)', 'AB (Auto Bottom)', 'SLB (Snap Lock Bottom)',
+    '1-2-3 Bottom (Snap Lock Bottom)', 'FSE (Full Seal End)', 'RET (Roll End Tuck)',
+    'RETT (Roll End Tuck Top)', 'RETF (Roll End Tuck Front)', 'WL (Walker Lock)',
+    'SLEEV (Sleeve)', 'SL+TR (Sleeve + Tray)', 'HSC (Half Slotted Carton)',
+    'Origami (Self Locking)', 'Custom'
+  ];
+  const MATERIAL_OPTIONS = [
+    '18pt Hemp Field Board',
+    '10pt Hemp Terra Tag',
+    'Custom'
+  ];
+  const PRINTING_OPTIONS = [
+    '4/0 Full Color 1 Sided Print',
+    '4/4 Full Color 2 Sided Print',
+    'Custom'
+  ];
   const [darkMode, setDarkMode] = React.useState(() => {
     const savedTheme = localStorage.getItem('theme');
     return savedTheme ? savedTheme === 'dark' : false;
   });
+  const [isQuoteFormVisible, setIsQuoteFormVisible] = React.useState(false);
+  const [clientName, setClientName] = React.useState('');
+  const [quoteDate, setQuoteDate] = React.useState(new Date().toISOString().slice(0,10));
+  const [description, setDescription] = React.useState('CPIDXXXX');
+  const [size, setSize] = React.useState({ length: '', width: '', height: '' });
+  const [includesInsert, setIncludesInsert] = React.useState(false);
+  const [comments, setComments] = React.useState('');
+  const [selectedStyle, setSelectedStyle] = React.useState(STYLE_OPTIONS[0]);
+  const [customStyle, setCustomStyle] = React.useState('');
+  const [didNumber, setDidNumber] = React.useState('DIDXXX');
+  const [selectedMaterial, setSelectedMaterial] = React.useState(MATERIAL_OPTIONS[0]);
+  const [customMaterial, setCustomMaterial] = React.useState('');
+  const [selectedPrinting, setSelectedPrinting] = React.useState(PRINTING_OPTIONS[0]);
+  const [customPrinting, setCustomPrinting] = React.useState('');
 
   React.useEffect(() => {
     if (darkMode) {
@@ -1011,6 +1043,169 @@ function App() {
                 </div>
               </div>
             </section>
+          </div>
+          <button type="button" onClick={() => setIsQuoteFormVisible(!isQuoteFormVisible)} className="mt-4 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">Prepare Client Quote</button>
+          <div id="quoteFormContainer" className={
+            `mt-4 p-4 border border-gray-300 rounded overflow-hidden transition-all duration-500 ease-in-out ${
+              isQuoteFormVisible ? 'max-h-screen opacity-100' : 'max-h-0 opacity-0'
+            }`
+          }>
+            {/* Client Name */}
+            <div className="mb-4">
+              <label htmlFor="clientName" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Client Name</label>
+              <input type="text" id="clientName" name="clientName" value={clientName} onChange={(e) => setClientName(e.target.value)} required className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100" />
+            </div>
+
+            {/* Quote Date */}
+            <div className="mb-4">
+              <label htmlFor="quoteDate" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Quote Date</label>
+              <input type="date" id="quoteDate" name="quoteDate" value={quoteDate} onChange={(e) => setQuoteDate(e.target.value)} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100" />
+            </div>
+
+            {/* Description */}
+            <div className="mb-4">
+              <label htmlFor="description" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Description</label>
+              <input type="text" id="description" name="description" value={description} onChange={(e) => setDescription(e.target.value)} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100" />
+            </div>
+
+            {/* Size Group */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Size</label>
+              <div className="mt-1 grid grid-cols-3 gap-4">
+                <div>
+                  <label htmlFor="sizeLength" className="block text-xs font-medium text-gray-500 dark:text-gray-400">Length</label>
+                  <input type="number" id="sizeLength" name="sizeLength" value={size.length} onChange={(e) => setSize(prev => ({ ...prev, length: e.target.value }))} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100" />
+                </div>
+                <div>
+                  <label htmlFor="sizeWidth" className="block text-xs font-medium text-gray-500 dark:text-gray-400">Width</label>
+                  <input type="number" id="sizeWidth" name="sizeWidth" value={size.width} onChange={(e) => setSize(prev => ({ ...prev, width: e.target.value }))} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100" />
+                </div>
+                <div>
+                  <label htmlFor="sizeHeight" className="block text-xs font-medium text-gray-500 dark:text-gray-400">Height</label>
+                  <input type="number" id="sizeHeight" name="sizeHeight" value={size.height} onChange={(e) => setSize(prev => ({ ...prev, height: e.target.value }))} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100" />
+                </div>
+              </div>
+            </div>
+
+            {/* Includes Insert */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Includes Insert</label>
+              <div className="mt-2 flex items-center space-x-4">
+                <div className="flex items-center">
+                  <input type="radio" id="includesInsertYes" name="includesInsert" value="true" checked={includesInsert === true} onChange={() => setIncludesInsert(true)} className="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:focus:ring-indigo-600" />
+                  <label htmlFor="includesInsertYes" className="ml-2 block text-sm text-gray-900 dark:text-gray-300">Yes</label>
+                </div>
+                <div className="flex items-center">
+                  <input type="radio" id="includesInsertNo" name="includesInsert" value="false" checked={includesInsert === false} onChange={() => setIncludesInsert(false)} className="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:focus:ring-indigo-600" />
+                  <label htmlFor="includesInsertNo" className="ml-2 block text-sm text-gray-900 dark:text-gray-300">No</label>
+                </div>
+              </div>
+            </div>
+
+            {/* Comments */}
+            <div className="mb-4">
+              <label htmlFor="comments" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Comments</label>
+              <textarea id="comments" name="comments" rows="3" value={comments} onChange={(e) => setComments(e.target.value)} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"></textarea>
+            </div>
+
+            {/* Style Dropdown */}
+            <div className="mb-4">
+              <label htmlFor="selectedStyle" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Style</label>
+              <select
+                id="selectedStyle"
+                name="selectedStyle"
+                value={selectedStyle}
+                onChange={(e) => setSelectedStyle(e.target.value)}
+                className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
+              >
+                {STYLE_OPTIONS.map(option => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Custom Style Input (Conditional) */}
+            {selectedStyle === 'Custom' && (
+              <div className="mb-4">
+                <label htmlFor="customStyle" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Custom Style Name</label>
+                <input
+                  type="text"
+                  id="customStyle"
+                  name="customStyle"
+                  value={customStyle}
+                  onChange={(e) => setCustomStyle(e.target.value)}
+                  placeholder="Enter custom style"
+                  className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
+                />
+              </div>
+            )}
+
+            {/* DID# Input */}
+            <div className="mb-4">
+              <label htmlFor="didNumber" className="block text-sm font-medium text-gray-700 dark:text-gray-300">DID#</label>
+              <input
+                type="text"
+                id="didNumber"
+                name="didNumber"
+                value={didNumber}
+                onChange={(e) => setDidNumber(e.target.value)}
+                className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
+              />
+            </div>
+
+            {/* Material Dropdown */}
+            <div className="mb-4">
+              <label htmlFor="selectedMaterial" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Material</label>
+              <select
+                id="selectedMaterial"
+                name="selectedMaterial"
+                value={selectedMaterial}
+                onChange={(e) => setSelectedMaterial(e.target.value)}
+                className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
+              >
+                {MATERIAL_OPTIONS.map(option => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Custom Material Input (Conditional) */}
+            {selectedMaterial === 'Custom' && (
+              <div className="mb-4">
+                <label htmlFor="customMaterial" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Custom Material Name</label>
+                <input
+                  type="text"
+                  id="customMaterial"
+                  name="customMaterial"
+                  value={customMaterial}
+                  onChange={(e) => setCustomMaterial(e.target.value)}
+                  placeholder="Enter custom material"
+                  className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
+                />
+              </div>
+            )}
+
+            {/* Printing Dropdown */}
+            <div className="mb-4">
+              <label htmlFor="selectedPrinting" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Printing</label>
+              <select
+                id="selectedPrinting"
+                name="selectedPrinting"
+                value={selectedPrinting}
+                onChange={(e) => setSelectedPrinting(e.target.value)}
+                className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
+              >
+                {PRINTING_OPTIONS.map(option => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
       </div>
