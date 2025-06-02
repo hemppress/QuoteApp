@@ -1,0 +1,1031 @@
+<!DOCTYPE html>
+<html lang="en" class="">
+<head>
+  <meta charset="UTF-8" />
+  <title>Cost Calculator</title>
+
+  <!-- Tailwind with dark mode class strategy -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class'
+    }
+  </script>
+
+  <!-- React 18 + Babel -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" defer></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" defer></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js" defer></script>
+
+  <!-- Framer-motion -->
+  <script src="https://unpkg.com/framer-motion@11/dist/framer-motion.umd.js" defer></script>
+
+  <!-- jsPDF + AutoTable -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js" defer></script>
+</head>
+<body class="bg-slate-100 text-slate-800 dark:bg-slate-900 dark:text-slate-100 min-h-screen">
+  <div id="root" class="container mx-auto p-6"></div>
+  <div id="fallback" class="hidden text-center p-6 text-red-500">
+    Error: App failed to load. Check console for details or ensure JavaScript is enabled.
+  </div>
+
+  <script type="text/babel">
+/* ------------ ERROR BOUNDARY ------------- */
+class ErrorBoundary extends React.Component {
+  state = { hasError: false };
+  static getDerivedStateFromError() { return { hasError: true }; }
+  componentDidCatch(error, info) { console.error("ErrorBoundary caught:", error, info); }
+  render() {
+    if (this.state.hasError) {
+      return <div className="text-red-500 p-6 text-center">Something went wrong. Check console for details.</div>;
+    }
+    return this.props.children;
+  }
+}
+
+/* ------------ SAFE MOTION ------------- */
+const motion = window.framerMotion?.motion ?? { div: ({children,...p})=> <div {...p}>{children}</div> };
+
+/* ============ CONSTANTS ============ */
+const RATES = {
+  QTY_PRESETS_DEFAULT:[250,500,1000,3000,5000,10000,25000],
+  QTY_PRESETS_SHORT:[25,50,75,100,125,150,200,250],
+  PAPERS:[
+    {id:'18pt', label:'18 pt — $1.09/PS', cost:1.09},
+    {id:'10pt', label:'10 pt — $0.67/PS', cost:0.67},
+    {id:'80txt',label:'80# Text — $0.40/PS', cost:0.40},
+  ],
+  PRINT_TIERS:{
+    "1":[{min:1,max:499,price:0.85},{min:500,max:749,price:0.56},{min:750,max:999,price:0.46},{min:1000,max:2499,price:0.41},{min:2500,max:20000,price:0.32}],
+    "2":[{min:1,max:499,price:1.13},{min:500,max:749,price:0.83},{min:750,max:999,price:0.73},{min:1000,max:2499,price:0.68},{min:2500,max:20000,price:0.59}],
+  },
+  DIE_MACHINES:{
+    OG:{label:'OG Windmill – $0.04/impression (Setup: $60)', action:0.04, setup:60, stripping:0.01},
+    GT:{label:'GT Windmill – $0.04/impression (Setup: $60)', action:0.04, setup:60, stripping:0.01},
+    BRY:{label:'Barry – $0.12/impression (Setup: $60)', action:0.12, setup:60, stripping:0.03},
+  },
+  GLUE_MACHINES:{
+    HAND:{label:'Hand Glue', rates:{Fast:0.08,Slow:0.12,Complex:0.16}},
+    MACHINE:{label:'Machine Glue', rates:{Standard:0.04,Complex:0.06}},
+  },
+  LOWEST_PRINT:{'1':0.32,'2':0.59},
+  MARGINS:[0.60,0.50,0.40,0.30,0.25,0.15],
+};
+
+/* ========= UTILS ========= */
+const ceil=Math.ceil;
+const round2=n=>+(Math.round(n*100)/100).toFixed(2);
+const tierPrice=(ps,side)=>RATES.PRINT_TIERS[side].find(t=>ps>=t.min&&ps<=t.max)?.price ?? RATES.PRINT_TIERS[side].at(-1).price;
+
+/* ========== COST ENGINE ========== */
+function compute(params){
+  const overage = params.customOversQty !== '' && params.customOversQty >= 0 ? 0 : (params.overage || 10);
+  const customOversQty = params.customOversQty !== '' && params.customOversQty >= 0 ? +params.customOversQty : 0;
+  const effQty = customOversQty > 0 ? (params.qty + customOversQty) : (params.qty * (1 + overage / 100));
+  const effectiveOveragePercent = customOversQty > 0 ? (customOversQty / params.qty * 100) : overage;
+  const pressSheets = Math.max(5, ceil(effQty / params.OUT));
+  const paperCost = pressSheets * params.paper.cost;
+  const printCostPS = params.includePrint ? (params.printOverride1Sided ?? tierPrice(pressSheets,'1')) : 0;
+  const printCostPS2 = params.includePrint ? (params.printOverride2Sided ?? tierPrice(pressSheets,'2')) : 0;
+  const print1 = pressSheets * printCostPS;
+  const print2 = pressSheets * printCostPS2;
+  const dieM = RATES.DIE_MACHINES[params.die.machine];
+  const action = params.die.customAction ?? dieM.action;
+  const setup = params.die.customSetup ?? dieM.setup;
+  const stripPerPc = params.windows > 0 ? (dieM.stripping + params.windows * 0.015) : 0;
+  const actionPerPc = action / params.UP;
+  const dieVar = params.includeDie ? effQty * (actionPerPc + stripPerPc) : 0;
+  const dieSetupCostPerPc = params.includeDie ? setup / effQty : 0;
+  const dieCost = dieVar + (params.includeDie ? setup : 0);
+  let glueCostMarkup = 0;
+  let glueCostEx = 0;
+  if (params.glue.include) {
+    if (params.glue.customRate && params.glue.customRate > 0) {
+      glueCostMarkup = params.glue.customRate * effQty;
+      glueCostEx = 0;
+    } else {
+      const glueRate = RATES.GLUE_MACHINES[params.glue.machine].rates[params.glue.mode];
+      const glueTotal = glueRate * effQty;
+      if (params.glue.machine === 'HAND' && params.glue.atCost) {
+        glueCostMarkup = Math.min(0.04 * effQty, glueTotal);
+        glueCostEx = glueTotal - glueCostMarkup;
+      } else {
+        glueCostMarkup = glueTotal;
+      }
+    }
+  }
+  let preCost = 0;
+  if (params.includePrepress) {
+    if (params.prepressOverrideCost !== null) {
+      preCost = params.prepressOverrideCost;
+    } else {
+      preCost = 50 + Math.max(0, params.SKUs - 1) * 35;
+    }
+  }
+  const handlingRate = params.includeHandling ? (params.handleOverride !== '' ? +params.handleOverride : (params.OUT <= 5 ? 0.02 : 0)) : 0;
+  const handlingCost = handlingRate * effQty;
+  const margin = params.useMargin ? params.margin : 0;
+  let totalCustomCost = 0;
+  let customCostPerPieceTotal = 0;
+  if (params.includeCustomCost) {
+    customCostPerPieceTotal = params.customCostPerPiece * effQty;
+    const setupCost = params.customCostSetup;
+    totalCustomCost = customCostPerPieceTotal + setupCost;
+  }
+
+  function sideTotals(printCostSide) {
+    let markupBase = printCostSide + dieCost + glueCostMarkup + customCostPerPieceTotal;
+    let excluded = glueCostEx + preCost + handlingCost;
+    if (params.paperAtCost) {
+      markupBase += 0;
+      excluded += paperCost;
+    } else if (params.splitPaperCost) {
+      const halfPaperCost = paperCost / 2;
+      markupBase += halfPaperCost;
+      excluded += halfPaperCost;
+    } else {
+      markupBase += paperCost;
+    }
+    const sellPcRaw = (markupBase / (1 - margin) + excluded) / params.qty;
+    const sellPc = round2(sellPcRaw);
+    const sellTotal = round2(sellPc * params.qty);
+    const costBreak = {
+      paper: paperCost / params.qty,
+      print: printCostSide / params.qty,
+      die: dieSetupCostPerPc + (dieVar / params.qty),
+      strip: params.windows ? stripPerPc : 0,
+      glue: (glueCostMarkup + glueCostEx) / params.qty,
+      pre: preCost / params.qty,
+      handling: handlingCost / params.qty,
+      outside: (paperCost + printCostSide) / params.qty,
+      inside: (dieCost + glueCostMarkup + glueCostEx + preCost + handlingCost) / params.qty
+    };
+    if (params.includeCustomCost && totalCustomCost > 0) {
+      const keyForCustomCost = params.customCostName || 'Custom Cost';
+      costBreak[keyForCustomCost] = totalCustomCost / params.qty;
+    }
+    return { sellPc, sellTotal, costBreak, effectiveOveragePercent };
+  }
+
+  return { pressSheets,
+           one: sideTotals(print1),
+           two: sideTotals(print2),
+           addOn: round2(sideTotals(print2).sellPc - sideTotals(print1).sellPc) };
+}
+
+/* ====== BEST-PRICE notched to 100 ====== */
+function bestBreaks(OUT, overage) {
+  const set = new Set();
+  ['1', '2'].forEach(s => {
+    RATES.PRINT_TIERS[s].slice(1).forEach(t => {
+      const pcs = ceil((t.min * OUT) / (1 + overage / 100) / 100) * 100;
+      set.add(pcs);
+    });
+  });
+  return [...set].sort((a, b) => a - b);
+}
+
+/* ===== Components ===== */
+const Label = ({ children }) => <label className="flex flex-col gap-1 text-sm">{children}</label>;
+const Num = props => <input type="number" className="border rounded px-2 py-1 w-full dark:bg-slate-700 dark:border-slate-600" {...props} />;
+
+/* =========== APP =========== */
+function App() {
+  const [darkMode, setDarkMode] = React.useState(() => {
+    const savedTheme = localStorage.getItem('theme');
+    return savedTheme ? savedTheme === 'dark' : false;
+  });
+
+  React.useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('theme', 'light');
+    }
+  }, [darkMode]);
+
+  const [quantities, setQuantities] = React.useState(RATES.QTY_PRESETS_DEFAULT.map(q => ({ value: q, active: true, isDefault: true })));
+  const [selectedRange, setSelectedRange] = React.useState('default');
+  const [customQty, setCustomQty] = React.useState('');
+  const [overage, setOverage] = React.useState(10);
+  const [customOversQty, setCustomOversQty] = React.useState('');
+  const [showCustomOverage, setShowCustomOverage] = React.useState(false);
+  const [UP, setUP] = React.useState(2);
+  const [OUT, setOUT] = React.useState(1);
+  const [papers, setPapers] = React.useState([...RATES.PAPERS]);
+  const [paperIdx, setPaperIdx] = React.useState(0);
+  const [paperAtCost, setPaperAtCost] = React.useState(false);
+  const [splitPaperCost, setSplitPaperCost] = React.useState(true);
+  const [showCustomPaperFields, setShowCustomPaperFields] = React.useState(false);
+  const [customPaperName, setCustomPaperName] = React.useState('');
+  const [customPaperPrice, setCustomPaperPrice] = React.useState('');
+  const [includePrint, setIncludePrint] = React.useState(true);
+  const [showCustomPrintCost, setShowCustomPrintCost] = React.useState(false);
+  const [printOverride1Sided, setPrintOverride1Sided] = React.useState('');
+  const [printOverride2Sided, setPrintOverride2Sided] = React.useState('');
+  const [includeDie, setIncludeDie] = React.useState(true);
+  const [dieMachine, setDieMachine] = React.useState('OG');
+  const [windows, setWindows] = React.useState(0);
+  const [showCustomDieCost, setShowCustomDieCost] = React.useState(false);
+  const [showHasWindow, setShowHasWindow] = React.useState(false);
+  const [dieSetupOverride, setDieSetupOverride] = React.useState('');
+  const [dieActionOverride, setDieActionOverride] = React.useState('');
+  const [glueInclude, setGlueInclude] = React.useState(true);
+  const [glueMachine, setGlueMachine] = React.useState('HAND');
+  const [glueMode, setGlueMode] = React.useState('Fast');
+  const [glueAtCost, setGlueAtCost] = React.useState(true);
+  const [showCustomGlueRate, setShowCustomGlueRate] = React.useState(false);
+  const [customGlueRate, setCustomGlueRate] = React.useState('');
+  const [SKUs, setSKUs] = React.useState(1);
+  const [includePrepress, setIncludePrepress] = React.useState(true);
+  const [showCustomPrepress, setShowCustomPrepress] = React.useState(false);
+  const [prepressOverrideCost, setPrepressOverrideCost] = React.useState('');
+  const [useMargin, setUseMargin] = React.useState(true);
+  const [marginPreset, setMarginPreset] = React.useState('0.50');
+  const [marginCustom, setMarginCustom] = React.useState('');
+  const [includeHandling, setIncludeHandling] = React.useState(false);
+  const [handleOverride, setHandleOverride] = React.useState('');
+  const [includeCustomCost, setIncludeCustomCost] = React.useState(false);
+  const [customCostName, setCustomCostNameState] = React.useState('');
+  const [customCostValue, setCustomCostValueState] = React.useState('');
+  const [customCostSetup, setCustomCostSetup] = React.useState('');
+  const [showEarnings, setShowEarnings] = React.useState({});
+  const [showCosts, setShowCosts] = React.useState({});
+  const [allTogglesOn, setAllTogglesOn] = React.useState(false);
+
+  // Auto-toggle handling based on OUT
+  React.useEffect(() => {
+    setIncludeHandling(OUT <= 5);
+  }, [OUT]);
+
+  const toggleEarnings = (qty) => {
+    setShowEarnings(prev => ({ ...prev, [qty]: !prev[qty] }));
+  };
+
+  const toggleCosts = (qty) => {
+    setShowCosts(prev => ({ ...prev, [qty]: !prev[qty] }));
+  };
+
+  const toggleAll = () => {
+    const newState = !allTogglesOn;
+    setAllTogglesOn(newState);
+    const updatedEarnings = {};
+    const updatedCosts = {};
+    quantities.filter(qObj => qObj.active).forEach(qObj => {
+      updatedEarnings[qObj.value] = newState;
+      updatedCosts[qObj.value] = newState;
+    });
+    setShowEarnings(updatedEarnings);
+    setShowCosts(updatedCosts);
+  };
+
+  const handleAddCustomPaper = () => {
+    if (customPaperName && customPaperPrice) {
+      const newPaperCost = parseFloat(customPaperPrice);
+      if (isNaN(newPaperCost)) {
+        alert('Please enter a valid price for the custom paper.');
+        return;
+      }
+      const newPaper = {
+        id: customPaperName.toLowerCase().replace(/\s+/g, '-'),
+        label: `${customPaperName} — $${newPaperCost.toFixed(2)}/PS`,
+        cost: newPaperCost
+      };
+      setPapers(prevPapers => {
+        const updatedPapers = [...prevPapers, newPaper];
+        setPaperIdx(updatedPapers.length - 1);
+        return updatedPapers;
+      });
+      setCustomPaperName('');
+      setCustomPaperPrice('');
+    } else {
+      alert('Please enter both name and price for the custom paper.');
+    }
+  };
+
+  const baseParams = q => ({
+    qty: q,
+    overage,
+    customOversQty,
+    UP: +UP || 1,
+    OUT: +OUT || 1,
+    paper: papers[paperIdx],
+    paperAtCost,
+    splitPaperCost,
+    includePrint,
+    printOverride1Sided: printOverride1Sided ? +printOverride1Sided : null,
+    printOverride2Sided: printOverride2Sided ? +printOverride2Sided : null,
+    includeDie,
+    die: {
+      machine: dieMachine,
+      customSetup: dieSetupOverride ? +dieSetupOverride : null,
+      customAction: dieActionOverride ? +dieActionOverride : null
+    },
+    windows: +windows || 0,
+    glue: {
+      include: glueInclude,
+      machine: glueMachine,
+      mode: glueMode,
+      atCost: glueAtCost,
+      customRate: customGlueRate ? +customGlueRate : null
+    },
+    SKUs: +SKUs || 1,
+    includePrepress: includePrepress,
+    prepressOverrideCost: prepressOverrideCost !== '' ? +prepressOverrideCost : null,
+    useMargin,
+    margin: (() => {
+      let effectiveMargin = 0;
+      if (marginCustom) {
+        effectiveMargin = +marginCustom / 100;
+      } else {
+        effectiveMargin = +marginPreset;
+      }
+      return Math.min(effectiveMargin, 0.99);
+    })(),
+    includeHandling,
+    handleOverride,
+    includeCustomCost: includeCustomCost,
+    customCostName: customCostName,
+    customCostPerPiece: customCostValue ? +customCostValue : 0,
+    customCostSetup: customCostSetup ? +customCostSetup : 0,
+  });
+
+  const fmtLines = (side) => quantities
+    .filter(qObj => qObj.active)
+    .map(qObj => `${qObj.value.toLocaleString().padEnd(7,' ')} ........... $${compute(baseParams(qObj.value))[side].sellPc.toFixed(2)}`)
+    .join('\n');
+
+  const bestQs = bestBreaks(OUT, overage);
+  const bestLines = (side) => bestQs.map(q => `${q.toLocaleString().padEnd(7,' ')} ........... $${compute(baseParams(q))[side].sellPc.toFixed(2)}`).join('\n');
+
+  const lowLines = (side) => quantities
+    .filter(qObj => qObj.active)
+    .map(qObj => {
+      const p = baseParams(qObj.value);
+      if (side === 'one') {
+        p.printOverride1Sided = RATES.LOWEST_PRINT['1'];
+        p.printOverride2Sided = 0;
+      } else {
+        p.printOverride1Sided = RATES.LOWEST_PRINT['1'];
+        p.printOverride2Sided = RATES.LOWEST_PRINT['2'];
+      }
+      return `${qObj.value.toLocaleString().padEnd(7,' ')} ........... $${compute(p)[side].sellPc.toFixed(2)}`;
+    }).join('\n');
+
+  return (
+    <ErrorBoundary>
+      <div className="flex justify-end mb-4 gap-2">
+        <button
+          onClick={() => setDarkMode(prev => !prev)}
+          className="px-4 py-2 bg-indigo-500 text-white rounded hover:bg-indigo-600 dark:bg-indigo-600 dark:hover:bg-indigo-700 flex items-center gap-2"
+        >
+          {darkMode ? (
+            <>
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+              </svg>
+              Light Mode
+            </>
+          ) : (
+            <>
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+              </svg>
+              Dark Mode
+            </>
+          )}
+        </button>
+        <button
+          onClick={toggleAll}
+          className="px-4 py-2 bg-indigo-500 text-white rounded hover:bg-indigo-600 dark:bg-indigo-600 dark:hover:bg-indigo-700"
+        >
+          {allTogglesOn ? 'Hide Profit & Costs' : 'Show Profit & Costs'}
+        </button>
+      </div>
+      <div className="grid md:grid-cols-2 gap-8">
+        <div className="space-y-6">
+          <h1 className="text-2xl font-bold">Custom Costing</h1>
+          <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
+            <div className="bg-indigo-500 text-white rounded-t-xl p-2">
+              <h2 className="text-xl font-bold">Select Order Quantities</h2>
+              <p className="text-xs">Click quantity boxes to toggle them on or off</p>
+            </div>
+            <div className="p-3 space-y-3">
+              <div className="flex flex-wrap gap-2">
+                <button
+                  className={`px-3 py-1 rounded ${selectedRange === 'default' ? 'bg-indigo-500 text-white hover:bg-indigo-600 dark:hover:bg-indigo-500' : 'bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600'}`}
+                  onClick={() => {
+                    setQuantities(RATES.QTY_PRESETS_DEFAULT.map(q => ({ value: q, active: true, isDefault: true })));
+                    setSelectedRange('default');
+                  }}
+                >
+                  Default (250-25k)
+                </button>
+                <button
+                  className={`px-3 py-1 rounded ${selectedRange === 'short' ? 'bg-indigo-500 text-white hover:bg-indigo-600 dark:hover:bg-indigo-500' : 'bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600'}`}
+                  onClick={() => {
+                    setQuantities(RATES.QTY_PRESETS_SHORT.map(q => ({ value: q, active: true, isDefault: true })));
+                    setSelectedRange('short');
+                  }}
+                >
+                  Short Run (25-250)
+                </button>
+              </div>
+              {selectedRange && (
+                <div className="flex flex-wrap gap-2">
+                  {quantities.sort((a, b) => a.value - b.value).map(qObj => (
+                    <button
+                      key={qObj.value}
+                      className={`px-3 py-1 rounded hover:bg-slate-300 dark:hover:bg-slate-600 ${qObj.active ? 'bg-indigo-500 text-white hover:bg-indigo-600 dark:hover:bg-indigo-500' : 'bg-slate-200 dark:bg-slate-700'}`}
+                      onClick={() => setQuantities(prevQuantities =>
+                        prevQuantities.map(item =>
+                          item.value === qObj.value ? { ...item, active: !item.active } : item
+                        )
+                      )}
+                    >
+                      {qObj.value.toLocaleString()}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="flex gap-2">
+                <Num value={customQty} onChange={e => setCustomQty(e.target.value)} placeholder="Enter custom qty"/>
+                <button
+                  className="px-3 py-1 bg-indigo-500 text-white rounded hover:bg-indigo-600 dark:hover:bg-indigo-500"
+                  onClick={() => {
+                    if (customQty) {
+                      const numQty = +customQty;
+                      setQuantities(prevQs => {
+                        const existingQty = prevQs.find(q => q.value === numQty);
+                        if (existingQty) {
+                          return prevQs.map(q => q.value === numQty ? { ...q, active: true } : q);
+                        } else {
+                          return [...prevQs, { value: numQty, active: true, isDefault: false }].sort((a, b) => a.value - b.value);
+                        }
+                      });
+                      setCustomQty('');
+                    }
+                  }}
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+          </section>
+          <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
+            <div className="bg-indigo-500 text-white rounded-t-xl p-2">
+              <h2 className="text-xl font-bold">Overage</h2>
+              <p className="text-xs">Enter custom overs quantity</p>
+              <div className="flex gap-2 mt-1">
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={showCustomOverage} onChange={e => setShowCustomOverage(e.target.checked)} />
+                  Custom Cost
+                </label>
+              </div>
+            </div>
+            <div className="p-3 space-y-3">
+              <div className="flex flex-wrap gap-2">
+                {[15, 10, 5].map(ov => (
+                  <button
+                    key={ov}
+                    className={`px-3 py-1 rounded ${overage === ov && customOversQty === '' ? 'bg-indigo-500 text-white hover:bg-indigo-600 dark:hover:bg-indigo-500' : 'bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600'}`}
+                    onClick={() => {
+                      setOverage(ov);
+                      setCustomOversQty('');
+                    }}
+                  >
+                    {ov}%
+                  </button>
+                ))}
+              </div>
+              {showCustomOverage && (
+                <div className="flex gap-2">
+                  <Num
+                    value={customOversQty}
+                    onChange={e => setCustomOversQty(e.target.value)}
+                    placeholder="Enter custom qty (pcs not %)"
+                    min="0"
+                  />
+                </div>
+              )}
+            </div>
+          </section>
+          <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
+            <div className="bg-indigo-500 text-white rounded-t-xl p-2">
+              <h2 className="text-xl font-bold">Piece Layout</h2>
+            </div>
+            <div className="p-3">
+              <div className="grid grid-cols-2 gap-4">
+                <Label>UP (Units per Cut Sheet)<Num value={UP} onChange={e => setUP(e.target.value)} /></Label>
+                <Label>OUT (Units Per Press Sheet)<Num value={OUT} onChange={e => setOUT(e.target.value)} /></Label>
+              </div>
+            </div>
+          </section>
+          <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
+            <div className="bg-indigo-500 text-white rounded-t-xl p-2">
+              <h2 className="text-xl font-bold">Paper</h2>
+              <div className="flex gap-2 mt-1">
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={splitPaperCost} onChange={e => setSplitPaperCost(e.target.checked)} />
+                  Split paper cost (50% markup, 50% at cost)
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={paperAtCost} onChange={e => setPaperAtCost(e.target.checked)} />
+                  Add paper at cost (exclude markup)
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={showCustomPaperFields} onChange={e => setShowCustomPaperFields(e.target.checked)} />
+                  Add Custom Paper
+                </label>
+              </div>
+            </div>
+            <div className="p-3 space-y-2">
+              <select className="w-full border rounded px-2 py-1 dark:bg-slate-700 dark:border-slate-600" value={paperIdx} onChange={e => setPaperIdx(+e.target.value)}>
+                {papers.map((p, i) => <option key={p.id} value={i}>{p.label}</option>)}
+              </select>
+              {showCustomPaperFields && (
+                <div className="mt-4 space-y-2">
+                  <Label>Paper Name
+                    <input type="text" value={customPaperName} onChange={e => setCustomPaperName(e.target.value)} className="border rounded px-2 py-1 w-full dark:bg-slate-700 dark:border-slate-600" />
+                  </Label>
+                  <Label>Price per Press Sheet
+                    <Num value={customPaperPrice} onChange={e => setCustomPaperPrice(e.target.value)} />
+                  </Label>
+                  <button
+                    onClick={handleAddCustomPaper}
+                    className="px-3 py-1 bg-indigo-500 text-white rounded hover:bg-indigo-600 dark:hover:bg-indigo-500 text-sm"
+                  >
+                    Add Custom Paper
+                  </button>
+                </div>
+              )}
+            </div>
+          </section>
+          <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
+            <div className="bg-indigo-500 text-white rounded-t-xl p-2">
+              <h2 className="text-xl font-bold">Printing</h2>
+              <div className="flex gap-2 mt-1">
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={includePrint} onChange={e => setIncludePrint(e.target.checked)} />
+                  Include printing
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={showCustomPrintCost} onChange={e => setShowCustomPrintCost(e.target.checked)} />
+                  Custom Printing Cost
+                </label>
+              </div>
+            </div>
+            <div className="p-3 space-y-2">
+              {includePrint && showCustomPrintCost && (
+                <>
+                  <Label>Override cost / Press-Sheet – 1 Sided <Num value={printOverride1Sided} onChange={e => setPrintOverride1Sided(e.target.value)} /></Label>
+                  <Label>Override cost / Press-Sheet – 2 Sided <Num value={printOverride2Sided} onChange={e => setPrintOverride2Sided(e.target.value)} /></Label>
+                </>
+              )}
+            </div>
+          </section>
+          <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
+            <div className="bg-indigo-500 text-white rounded-t-xl p-2">
+              <h2 className="text-xl font-bold">Die-Cutting</h2>
+              <div className="flex gap-2 mt-1">
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={includeDie} onChange={e => setIncludeDie(e.target.checked)} />
+                  Include die-cutting
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={showCustomDieCost} onChange={e => setShowCustomDieCost(e.target.checked)} />
+                  Custom Cost
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={showHasWindow} onChange={e => setShowHasWindow(e.target.checked)} />
+                  Has Window
+                </label>
+              </div>
+            </div>
+            <div className="p-3 space-y-2">
+              {includeDie && (
+                <>
+                  <Label>Select Machine
+                    <select className="border rounded px-2 py-1 dark:bg-slate-700 dark:border-slate-600" value={dieMachine} onChange={e => setDieMachine(e.target.value)}>
+                      {Object.entries(RATES.DIE_MACHINES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                    </select>
+                  </Label>
+                  {showCustomDieCost && (
+                    <>
+                      <Label>Custom setup $/job<Num value={dieSetupOverride} onChange={e => setDieSetupOverride(e.target.value)} /></Label>
+                      <Label>Custom action $/impression<Num value={dieActionOverride} onChange={e => setDieActionOverride(e.target.value)} /></Label>
+                    </>
+                  )}
+                  {showHasWindow && (
+                    <Label>Windows / piece<Num value={windows} min={0} onChange={e => setWindows(e.target.value)} /></Label>
+                  )}
+                </>
+              )}
+            </div>
+          </section>
+          <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
+            <div className="bg-indigo-500 text-white rounded-t-xl p-2">
+              <h2 className="text-xl font-bold">Glue</h2>
+              <div className="flex gap-2 mt-1">
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={glueInclude} onChange={e => setGlueInclude(e.target.checked)} />
+                  Include glue
+                </label>
+                {glueMachine === 'HAND' && (
+                  <label className="inline-flex items-center gap-2 text-sm">
+                    <input type="checkbox" checked={glueAtCost} onChange={e => setGlueAtCost(e.target.checked)} />
+                    Add glue at cost (first $0.04 in markup)
+                  </label>
+                )}
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={showCustomGlueRate} onChange={e => setShowCustomGlueRate(e.target.checked)} />
+                  Custom
+                </label>
+              </div>
+            </div>
+            <div className="p-3 space-y-2">
+              {glueInclude && (
+                <>
+                  <Label>Machine
+                    <select className="border rounded px-2 py-1 dark:bg-slate-700 dark:border-slate-600" value={glueMachine} onChange={e => { setGlueMachine(e.target.value); setGlueMode(Object.keys(RATES.GLUE_MACHINES[e.target.value].rates)[0]) }}>
+                      {Object.entries(RATES.GLUE_MACHINES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                    </select>
+                  </Label>
+                  <Label>Mode / rate
+                    <select className="border rounded px-2 py-1 dark:bg-slate-700 dark:border-slate-600" value={glueMode} onChange={e => setGlueMode(e.target.value)}>
+                      {Object.entries(RATES.GLUE_MACHINES[glueMachine].rates).map(([m, r]) => <option key={m} value={m}>{m} – ${r.toFixed(2)}/pc</option>)}
+                    </select>
+                  </Label>
+                  {showCustomGlueRate && (
+                    <Label>Custom Glue $/pc
+                      <Num value={customGlueRate} onChange={e => setCustomGlueRate(e.target.value)} placeholder="e.g., 0.10" />
+                    </Label>
+                  )}
+                </>
+              )}
+            </div>
+          </section>
+          <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
+            <div className="bg-indigo-500 text-white rounded-t-xl p-2">
+              <h2 className="text-xl font-bold">Handling</h2>
+              <div className="flex gap-2 mt-1">
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={includeHandling} onChange={e => setIncludeHandling(e.target.checked)} />
+                  Include handling
+                </label>
+              </div>
+            </div>
+            <div className="p-3 space-y-2">
+              {includeHandling && <Label>Cost / piece<Num value={handleOverride} onChange={e => setHandleOverride(e.target.value)} /></Label>}
+              <p className="text-xs text-slate-500 dark:text-slate-400">Default $0.02 / pc when OUT ≤ 5</p>
+            </div>
+          </section>
+          <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
+            <div className="bg-indigo-500 text-white rounded-t-xl p-2">
+              <h2 className="text-xl font-bold">Custom Cost</h2>
+              <div className="flex gap-2 mt-1">
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={includeCustomCost} onChange={e => setIncludeCustomCost(e.target.checked)} />
+                  Enable Custom Cost
+                </label>
+              </div>
+            </div>
+            <div className="p-3 space-y-2">
+              {includeCustomCost && (
+                <div className="space-y-2 pt-2">
+                  <Label>Custom Name
+                    <input
+                      type="text"
+                      value={customCostName}
+                      onChange={e => setCustomCostNameState(e.target.value)}
+                      placeholder="e.g., Packing Fee"
+                      className="border rounded px-2 py-1 w-full dark:bg-slate-700 dark:border-slate-600"
+                    />
+                  </Label>
+                  <Label>Custom Cost / pc
+                    <Num value={customCostValue} onChange={e => setCustomCostValueState(e.target.value)} />
+                  </Label>
+                  <Label>Custom Cost Setup / Order
+                    <Num value={customCostSetup} onChange={e => setCustomCostSetup(e.target.value)} placeholder="e.g., 50" />
+                  </Label>
+                </div>
+              )}
+            </div>
+          </section>
+          <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
+            <div className="bg-indigo-500 text-white rounded-t-xl p-2">
+              <h2 className="text-xl font-bold">Pre-press / Proofing</h2>
+              <div className="flex gap-2 mt-1">
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={includePrepress} onChange={e => setIncludePrepress(e.target.checked)} />
+                  Include Pre-press / Proofing
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={showCustomPrepress} onChange={e => setShowCustomPrepress(e.target.checked)} />
+                  Custom
+                </label>
+              </div>
+            </div>
+            <div className="p-3 space-y-2">
+              {includePrepress && showCustomPrepress && (
+                <>
+                  <Label>Override Pre-press Cost ($)
+                    <Num value={prepressOverrideCost} onChange={e => setPrepressOverrideCost(e.target.value)} placeholder="e.g., 100" />
+                  </Label>
+                  <Label># of SKUs (used if override is not set)
+                    <Num value={SKUs} min={1} onChange={e => setSKUs(e.target.value)} />
+                  </Label>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Original logic: Base $60 + $35 per extra SKU. If override is set, SKU count is ignored for pre-press cost.</p>
+                </>
+              )}
+            </div>
+          </section>
+          <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
+            <div className="bg-indigo-500 text-white rounded-t-xl p-2">
+              <h2 className="text-xl font-bold">Margin</h2>
+              <div className="flex gap-2 mt-1">
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={useMargin} onChange={e => setUseMargin(e.target.checked)} />
+                  Include margin
+                </label>
+              </div>
+            </div>
+            <div className="p-3 space-y-2">
+              {useMargin && (
+                <>
+                  <select className="w-full border rounded px-2 py-1 dark:bg-slate-700 dark:border-slate-600" value={marginPreset} onChange={e => setMarginPreset(e.target.value)}>
+                    {RATES.MARGINS.map(m => <option key={m} value={m}>{(m * 100).toFixed(0)}%</option>)}
+                  </select>
+                  <Label>Custom %<Num value={marginCustom} onChange={e => setMarginCustom(e.target.value)} /></Label>
+                </>
+              )}
+            </div>
+          </section>
+        </div>
+        <div className="space-y-6">
+          <h1 className="text-2xl font-bold">Custom Pricing</h1>
+          {quantities.filter(qObj => qObj.active).map(qObj => {
+            const q = qObj.value;
+            const res = compute(baseParams(q));
+            const { one, two, addOn } = res;
+            const costBreakOneWithoutSummaries = Object.fromEntries(
+              Object.entries(res.one.costBreak).filter(([key]) => key !== 'outside' && key !== 'inside')
+            );
+            const costBreakTwoWithoutSummaries = Object.fromEntries(
+              Object.entries(res.two.costBreak).filter(([key]) => key !== 'outside' && key !== 'inside')
+            );
+            const totalCostPerPieceOne = Object.values(costBreakOneWithoutSummaries).reduce((a, b) => a + b, 0);
+            const costBreakdownStringOne = Object.entries(costBreakOneWithoutSummaries)
+              .filter(([key, value]) => value > 0.000001)
+              .map(([key, value]) => `${key.charAt(0).toUpperCase() + key.slice(1)}: $${value.toFixed(4)}`)
+              .join(' + ');
+            let percentageBreakdownStringOne = '';
+            if (totalCostPerPieceOne > 0) {
+              const costPercentagesOne = Object.entries(costBreakOneWithoutSummaries)
+                .filter(([key, value]) => value > 0.000001)
+                .map(([key, value]) => ({
+                  name: key.charAt(0).toUpperCase() + key.slice(1),
+                  percentage: (value / totalCostPerPieceOne) * 100,
+                }))
+                .sort((a, b) => b.percentage - a.percentage);
+              percentageBreakdownStringOne = costPercentagesOne
+                .map(item => `${item.name}: ${item.percentage.toFixed(1)}%`)
+                .join(' + ');
+            }
+            const totalCostPerPieceTwo = Object.values(costBreakTwoWithoutSummaries).reduce((a, b) => a + b, 0);
+            const costBreakdownStringTwo = Object.entries(costBreakTwoWithoutSummaries)
+              .filter(([key, value]) => value > 0.000001)
+              .map(([key, value]) => `${key.charAt(0).toUpperCase() + key.slice(1)}: $${value.toFixed(4)}`)
+              .join(' + ');
+            let percentageBreakdownStringTwo = '';
+            if (totalCostPerPieceTwo > 0) {
+              const costPercentagesTwo = Object.entries(costBreakTwoWithoutSummaries)
+                .filter(([key, value]) => value > 0.000001)
+                .map(([key, value]) => ({
+                  name: key.charAt(0).toUpperCase() + key.slice(1),
+                  percentage: (value / totalCostPerPieceTwo) * 100,
+                }))
+                .sort((a, b) => b.percentage - a.percentage);
+              percentageBreakdownStringTwo = costPercentagesTwo
+                .map(item => `${item.name}: ${item.percentage.toFixed(1)}%`)
+                .join(' + ');
+            }
+            const currentParams = baseParams(q);
+            const actualMarginUsed = currentParams.useMargin ? currentParams.margin : 0;
+            const earningsPerPcOne = res.one.sellPc - totalCostPerPieceOne;
+            const earningsTotalOne = earningsPerPcOne * q;
+            const earningsPerPcTwo = res.two.sellPc - totalCostPerPieceTwo;
+            const earningsTotalTwo = earningsPerPcTwo * q;
+            const outsideCostPercentageOne = totalCostPerPieceOne > 0 ? (res.one.costBreak.outside / totalCostPerPieceOne) * 100 : 0;
+            const insideCostPercentageOne = totalCostPerPieceOne > 0 ? (res.one.costBreak.inside / totalCostPerPieceOne) * 100 : 0;
+            const outsideCostPercentageTwo = totalCostPerPieceTwo > 0 ? (res.two.costBreak.outside / totalCostPerPieceTwo) * 100 : 0;
+            const insideCostPercentageTwo = totalCostPerPieceTwo > 0 ? (res.two.costBreak.inside / totalCostPerPieceTwo) * 100 : 0;
+            const effectiveOverageDisplay = customOversQty !== '' && customOversQty >= 0
+              ? `${customOversQty} pcs (${res.one.effectiveOveragePercent.toFixed(1)}%)`
+              : `${res.one.effectiveOveragePercent.toFixed(1)}%`;
+            return (
+              <motion.div key={q} className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow space-y-2" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
+                <div className="bg-indigo-500 text-white rounded-t-xl p-2 flex justify-between items-center">
+                  <h3 className="text-2xl font-bold">{q.toLocaleString()} pcs</h3>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => toggleEarnings(q)}
+                      className="px-2 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 text-sm"
+                    >
+                      {showEarnings[q] ? 'HIDE PROFITS' : 'PROFITS'}
+                    </button>
+                    <button
+                      onClick={() => toggleCosts(q)}
+                      className="px-2 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 text-sm"
+                    >
+                      {showCosts[q] ? 'HIDE COSTS' : 'COSTS'}
+                    </button>
+                  </div>
+                </div>
+                <div className="p-3">
+                  <table className="w-full text-sm mb-1">
+                    <thead><tr className="text-left"><th></th><th>$ / pc</th><th>Total</th></tr></thead>
+                    <tbody>
+                      <tr><td>1-Sided</td><td>${res.one.sellPc.toFixed(2)}</td><td>${res.one.sellTotal.toFixed(2)}</td></tr>
+                      <tr><td>2-Sided</td><td>${res.two.sellPc.toFixed(2)}</td><td>${res.two.sellTotal.toFixed(2)}</td></tr>
+                    </tbody>
+                  </table>
+                  <p className="text-sm">2-Sided add-on: +${addOn.toFixed(2)} / pc</p>
+                  {showEarnings[q] && (
+                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-600">
+                      <div className="grid md:grid-cols-2 gap-4">
+                        <div>
+                          <h4 className="font-semibold text-sm mt-1">Profit Details (1-Sided):</h4>
+                          <p className="text-xs text-slate-600 dark:text-slate-400">
+                            Margin: ${(actualMarginUsed * 100).toFixed(0)}%
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-400">
+                            Gross Profit: ${earningsTotalOne.toFixed(2)}
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-400">
+                            Profit $/pc: ${earningsPerPcOne.toFixed(2)}
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-400">
+                            Cost $/pc: ${totalCostPerPieceOne.toFixed(2)}
+                          </p>
+                        </div>
+                        <div>
+                          <h4 className="font-semibold text-sm mt-1">Profit Details (2-Sided):</h4>
+                          <p className="text-xs text-slate-600 dark:text-slate-400">
+                            Margin: ${(actualMarginUsed * 100).toFixed(0)}%
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-400">
+                            Gross Profit: ${earningsTotalTwo.toFixed(2)}
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-400">
+                            Profit $/pc: ${earningsPerPcTwo.toFixed(2)}
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-400">
+                            Cost $/pc: ${totalCostPerPieceTwo.toFixed(2)}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {showCosts[q] && (
+                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-600">
+                      <div className="grid md:grid-cols-2 gap-4">
+                        <div>
+                          <h4 className="font-semibold text-sm mt-1">Cost Details (1-Sided):</h4>
+                          <p className="text-xs text-slate-600 dark:text-slate-400">
+                            Direct Cost (External) / pc: ${res.one.costBreak.outside.toFixed(2)}
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-400">
+                            Direct Cost (External) %: ${(outsideCostPercentageOne.toFixed(2))}%
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-400">
+                            Direct Cost (Internal) / pc: ${res.one.costBreak.inside.toFixed(2)}
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-400">
+                            Direct Cost (Internal) %: ${(insideCostPercentageOne.toFixed(2))}%
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+                            Costs / pc (1-Sided): ${costBreakdownStringOne} = ${totalCostPerPieceOne.toFixed(4)}
+                          </p>
+                          {percentageBreakdownStringOne && (
+                            <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+                              Contribution: ${percentageBreakdownStringOne}
+                            </p>
+                          )}
+                          <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+                            Overage: {effectiveOverageDisplay}
+                          </p>
+                        </div>
+                        <div>
+                          <h4 className="font-semibold text-sm mt-1">Cost Details (2-Sided):</h4>
+                          <p className="text-xs text-slate-600 dark:text-slate-400">
+                            Direct Cost (External) / pc: ${res.two.costBreak.outside.toFixed(2)}
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-400">
+                            Direct Cost (External) %: ${(outsideCostPercentageTwo.toFixed(2))}%
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-400">
+                            Direct Cost (Internal) / pc: ${res.two.costBreak.inside.toFixed(2)}
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-400">
+                            Direct Cost (Internal) %: ${(insideCostPercentageTwo.toFixed(2))}%
+                          </p>
+                          <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+                            Costs / pc (2-Sided): ${costBreakdownStringTwo} = ${totalCostPerPieceTwo.toFixed(4)}
+                          </p>
+                          {percentageBreakdownStringTwo && (
+                            <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+                              Contribution: ${percentageBreakdownStringTwo}
+                            </p>
+                          )}
+                          <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+                            Overage: {effectiveOverageDisplay}
+                          </p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  <p className="text-sm font-bold text-slate-600 dark:text-slate-400 mt-2">
+                    Press-sheets incl. overage: {res.pressSheets}
+                  </p>
+                </div>
+              </motion.div>
+            );
+          })}
+          <div className="grid md:grid-cols-2 gap-4">
+            <div>
+              <section className="bg-white dark:bg-slate-800 rounded-xl shadow">
+                <div className="bg-indigo-500 text-white rounded-t-xl p-2">
+                  <h2 className="text-xl font-bold">Pricing Table 1-Sided</h2>
+                </div>
+                <div className="p-3">
+                  <div contentEditable className="whitespace-pre font-mono border rounded p-2 bg-white dark:bg-slate-800 shadow dark:border-slate-600" dangerouslySetInnerHTML={{ __html: fmtLines('one').replace(/\n/g, '<br/>') }}></div>
+                </div>
+              </section>
+            </div>
+            <div>
+              <section className="bg-white dark:bg-slate-800 rounded-xl shadow">
+                <div className="bg-indigo-500 text-white rounded-t-xl p-2">
+                  <h2 className="text-xl font-bold">Pricing Table 2-Sided</h2>
+                </div>
+                <div className="p-3">
+                  <div contentEditable className="whitespace-pre font-mono border rounded p-2 bg-white dark:bg-slate-800 shadow dark:border-slate-600" dangerouslySetInnerHTML={{ __html: fmtLines('two').replace(/\n/g, '<br/>') }}></div>
+                </div>
+              </section>
+            </div>
+          </div>
+          <div className="grid md:grid-cols-2 gap-4">
+            <div>
+              <section className="bg-white dark:bg-slate-800 rounded-xl shadow">
+                <div className="bg-indigo-500 text-white rounded-t-xl p-2">
+                  <h2 className="text-xl font-bold">Best-Price Quantities 1-Sided</h2>
+                </div>
+                <div className="p-3">
+                  <div contentEditable className="whitespace-pre font-mono border rounded p-2 bg-white dark:bg-slate-800 shadow dark:border-slate-600" dangerouslySetInnerHTML={{ __html: bestLines('one').replace(/\n/g, '<br/>') }}></div>
+                </div>
+              </section>
+            </div>
+            <div>
+              <section className="bg-white dark:bg-slate-800 rounded-xl shadow">
+                <div className="bg-indigo-500 text-white rounded-t-xl p-2">
+                  <h2 className="text-xl font-bold">Best-Price Quantities 2-Sided</h2>
+                </div>
+                <div className="p-3">
+                  <div contentEditable className="whitespace-pre font-mono border rounded p-2 bg-white dark:bg-slate-800 shadow dark:border-slate-600" dangerouslySetInnerHTML={{ __html: bestLines('two').replace(/\n/g, '<br/>') }}></div>
+                </div>
+              </section>
+            </div>
+          </div>
+          <div>
+            <section className="bg-white dark:bg-slate-800 rounded-xl shadow">
+              <div className="bg-indigo-500 text-white rounded-t-xl p-2">
+                <h2 className="text-xl font-bold">Low Cost Printing Pricing</h2>
+              </div>
+              <div className="p-3">
+                <div className="grid md:grid-cols-2 gap-4">
+                  <div contentEditable className="whitespace-pre font-mono border rounded p-2 bg-white dark:bg-slate-800 shadow dark:border-slate-600" dangerouslySetInnerHTML={{ __html: lowLines('one').replace(/\n/g, '<br/>') }}></div>
+                  <div contentEditable className="whitespace-pre font-mono border rounded p-2 bg-white dark:bg-slate-800 shadow dark:border-slate-600" dangerouslySetInnerHTML={{ __html: lowLines('two').replace(/\n/g, '<br/>') }}></div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </ErrorBoundary>
+  );
+}
+
+/* ===== MOUNT ===== */
+try {
+  ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  document.getElementById('fallback').style.display = 'none';
+} catch (e) {
+  console.error('Failed to mount React app:', e);
+  document.getElementById('fallback').style.display = 'block';
+}
+  </script>
+</body>
+</html>
