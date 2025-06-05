@@ -210,6 +210,15 @@ function App() {
     '4/4 Full Color 2 Sided Print',
     'Custom'
   ];
+  const FREIGHT_FOB_OPTIONS = [
+    'Eugene, OR',
+    'Custom'
+  ];
+  const ADDITIONAL_CHARGE_OPTIONS = ['Cutting Die(s)', 'Embossing Die(s)', 'None'];
+  const DISCLAIMER_TEXT = "Please note: This quote is an estimate and subject to change based on final artwork, material availability, and other factors. All orders are subject to Hemp Press Packaging's standard terms and conditions.";
+  const ACCOUNT_MANAGER_OPTIONS = ['Matt Glyer', 'Myron Chadowitz', 'T’halia Martinez', 'Custom'];
+  const PREPARED_BY_OPTIONS = ['MG', 'MC', 'TM', 'Custom'];
+
   const [darkMode, setDarkMode] = React.useState(() => {
     const savedTheme = localStorage.getItem('theme');
     return savedTheme ? savedTheme === 'dark' : false;
@@ -228,6 +237,17 @@ function App() {
   const [customMaterial, setCustomMaterial] = React.useState('');
   const [selectedPrinting, setSelectedPrinting] = React.useState(PRINTING_OPTIONS[0]);
   const [customPrinting, setCustomPrinting] = React.useState('');
+  const [selectedFreight, setSelectedFreight] = React.useState(FREIGHT_FOB_OPTIONS[0]);
+  const [customFreight, setCustomFreight] = React.useState('');
+  const [selectedAdditionalCharges, setSelectedAdditionalCharges] = React.useState([]);
+  const [customAdditionalChargeName, setCustomAdditionalChargeName] = React.useState('');
+  const [customAdditionalChargeValue, setCustomAdditionalChargeValue] = React.useState('');
+  const [showCustomAdditionalChargeInput, setShowCustomAdditionalChargeInput] = React.useState(false);
+  const [disclaimerEnabled, setDisclaimerEnabled] = React.useState(true);
+  const [selectedAccountManager, setSelectedAccountManager] = React.useState(ACCOUNT_MANAGER_OPTIONS[0]);
+  const [customAccountManager, setCustomAccountManager] = React.useState('');
+  const [selectedPreparedBy, setSelectedPreparedBy] = React.useState(PREPARED_BY_OPTIONS[0]);
+  const [customPreparedBy, setCustomPreparedBy] = React.useState('');
 
   React.useEffect(() => {
     if (darkMode) {
@@ -336,6 +356,25 @@ function App() {
     } else {
       alert('Please enter both name and price for the custom paper.');
     }
+  };
+
+  const handleAdditionalChargeChange = (charge) => {
+    setSelectedAdditionalCharges(prev => {
+      const isNoneSelected = prev.includes('None');
+      const isCurrentChargeNone = charge === 'None';
+
+      if (isCurrentChargeNone) {
+        return prev.includes(charge) ? [] : ['None'];
+      } else {
+        let newCharges;
+        if (prev.includes(charge)) {
+          newCharges = prev.filter(c => c !== charge);
+        } else {
+          newCharges = [...prev.filter(c => c !== 'None'), charge];
+        }
+        return newCharges.length === 0 ? [] : newCharges;
+      }
+    });
   };
 
   const baseParams = q => ({
@@ -1046,8 +1085,8 @@ function App() {
           </div>
           <button type="button" onClick={() => setIsQuoteFormVisible(!isQuoteFormVisible)} className="mt-4 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">Prepare Client Quote</button>
           <div id="quoteFormContainer" className={
-            `mt-4 p-4 border border-gray-300 rounded overflow-hidden transition-all duration-500 ease-in-out ${
-              isQuoteFormVisible ? 'max-h-screen opacity-100' : 'max-h-0 opacity-0'
+            `mt-4 p-4 border border-gray-300 rounded transition-all duration-500 ease-in-out ${
+              isQuoteFormVisible ? 'max-h-screen opacity-100 overflow-y-auto' : 'max-h-0 opacity-0 overflow-hidden'
             }`
           }>
             {/* Client Name */}
@@ -1206,6 +1245,202 @@ function App() {
                 ))}
               </select>
             </div>
+
+            {/* Custom Printing Input (Conditional) */}
+            {selectedPrinting === 'Custom' && (
+              <div className="mb-4">
+                <label htmlFor="customPrinting" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Custom Printing</label>
+                <input
+                  type="text"
+                  id="customPrinting"
+                  name="customPrinting"
+                  value={customPrinting}
+                  onChange={(e) => setCustomPrinting(e.target.value)}
+                  placeholder="Enter custom printing details"
+                  className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
+                />
+              </div>
+            )}
+
+            {/* Freight FOB Dropdown */}
+            <div className="mb-4">
+              <label htmlFor="selectedFreight" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Freight FOB</label>
+              <select
+                id="selectedFreight"
+                name="selectedFreight"
+                value={selectedFreight}
+                onChange={(e) => setSelectedFreight(e.target.value)}
+                className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
+              >
+                {FREIGHT_FOB_OPTIONS.map(option => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Custom Freight FOB Input (Conditional) */}
+            {selectedFreight === 'Custom' && (
+              <div className="mb-4">
+                <label htmlFor="customFreight" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Custom Freight FOB</label>
+                <input
+                  type="text"
+                  id="customFreight"
+                  name="customFreight"
+                  value={customFreight}
+                  onChange={(e) => setCustomFreight(e.target.value)}
+                  placeholder="Enter custom freight FOB"
+                  className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
+                />
+              </div>
+            )}
+
+            {/* Additional Charges Section */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Additional Charges</label>
+              <div className="mt-2 space-y-2">
+                {ADDITIONAL_CHARGE_OPTIONS.map(charge => (
+                  <div key={charge} className="flex items-center">
+                    <input
+                      type="checkbox"
+                      id={`charge-${charge}`}
+                      name={charge}
+                      checked={selectedAdditionalCharges.includes(charge)}
+                      onChange={() => handleAdditionalChargeChange(charge)}
+                      className="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:focus:ring-indigo-600 rounded"
+                    />
+                    <label htmlFor={`charge-${charge}`} className="ml-2 block text-sm text-gray-900 dark:text-gray-300">
+                      {charge}
+                    </label>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setShowCustomAdditionalChargeInput(prev => !prev)}
+                  className="mt-2 px-3 py-1 text-sm bg-indigo-500 text-white rounded hover:bg-indigo-600 dark:hover:bg-indigo-500"
+                >
+                  {showCustomAdditionalChargeInput ? 'Cancel Custom Charge' : 'Add Custom Charge'}
+                </button>
+                {showCustomAdditionalChargeInput && (
+                  <div className="mt-2 space-y-2 p-3 border border-gray-300 dark:border-gray-600 rounded-md">
+                    <div>
+                      <label htmlFor="customAdditionalChargeName" className="block text-xs font-medium text-gray-500 dark:text-gray-400">Custom Charge Name</label>
+                      <input
+                        type="text"
+                        id="customAdditionalChargeName"
+                        value={customAdditionalChargeName}
+                        onChange={(e) => setCustomAdditionalChargeName(e.target.value)}
+                        placeholder="Enter charge name"
+                        className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="customAdditionalChargeValue" className="block text-xs font-medium text-gray-500 dark:text-gray-400">Custom Charge Value ($)</label>
+                      <input
+                        type="number"
+                        id="customAdditionalChargeValue"
+                        value={customAdditionalChargeValue}
+                        onChange={(e) => setCustomAdditionalChargeValue(e.target.value)}
+                        placeholder="Enter charge value"
+                        className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Disclaimer Section */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Include Disclaimer</label>
+              <div className="mt-2 flex items-center">
+                <input
+                  type="checkbox"
+                  id="disclaimerEnabled"
+                  checked={disclaimerEnabled}
+                  onChange={() => setDisclaimerEnabled(prev => !prev)}
+                  className="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:focus:ring-indigo-600 rounded"
+                />
+                <label htmlFor="disclaimerEnabled" className="ml-2 block text-sm text-gray-900 dark:text-gray-300">
+                  Yes, include the disclaimer on the quote.
+                </label>
+              </div>
+              {disclaimerEnabled && (
+                <div className="mt-2 p-3 border border-gray-300 dark:border-gray-600 rounded-md bg-slate-50 dark:bg-slate-700">
+                  <p className="text-xs text-slate-600 dark:text-slate-300">{DISCLAIMER_TEXT}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Account Manager Dropdown */}
+            <div className="mb-4">
+              <label htmlFor="selectedAccountManager" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Account Manager</label>
+              <select
+                id="selectedAccountManager"
+                name="selectedAccountManager"
+                value={selectedAccountManager}
+                onChange={(e) => setSelectedAccountManager(e.target.value)}
+                className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
+              >
+                {ACCOUNT_MANAGER_OPTIONS.map(option => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Custom Account Manager Input (Conditional) */}
+            {selectedAccountManager === 'Custom' && (
+              <div className="mb-4">
+                <label htmlFor="customAccountManager" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Custom Account Manager</label>
+                <input
+                  type="text"
+                  id="customAccountManager"
+                  name="customAccountManager"
+                  value={customAccountManager}
+                  onChange={(e) => setCustomAccountManager(e.target.value)}
+                  placeholder="Enter account manager name"
+                  className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
+                />
+              </div>
+            )}
+
+            {/* Prepared By Dropdown */}
+            <div className="mb-4">
+              <label htmlFor="selectedPreparedBy" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Prepared By</label>
+              <select
+                id="selectedPreparedBy"
+                name="selectedPreparedBy"
+                value={selectedPreparedBy}
+                onChange={(e) => setSelectedPreparedBy(e.target.value)}
+                className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
+              >
+                {PREPARED_BY_OPTIONS.map(option => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Custom Prepared By Input (Conditional) */}
+            {selectedPreparedBy === 'Custom' && (
+              <div className="mb-4">
+                <label htmlFor="customPreparedBy" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Custom Prepared By</label>
+                <input
+                  type="text"
+                  id="customPreparedBy"
+                  name="customPreparedBy"
+                  value={customPreparedBy}
+                  onChange={(e) => setCustomPreparedBy(e.target.value)}
+                  placeholder="Enter prepared by name"
+                  className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
+                />
+              </div>
+            )}
+
           </div>
         </div>
       </div>
