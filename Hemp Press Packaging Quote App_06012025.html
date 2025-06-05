@@ -190,6 +190,38 @@ function bestBreaks(OUT, overage) {
 const Label = ({ children }) => <label className="flex flex-col gap-1 text-sm">{children}</label>;
 const Num = props => <input type="number" className="border rounded px-2 py-1 w-full dark:bg-slate-700 dark:border-slate-600" {...props} />;
 
+const FinalCustomPricingTable = ({ finalCustomPricingOneSided, finalCustomPricingTwoSided, onTextChange }) => {
+  return (
+    <section className="bg-white dark:bg-slate-800 rounded-xl shadow mt-6">
+      <div className="bg-indigo-500 text-white rounded-t-xl p-2">
+        <h2 className="text-xl font-bold">Final Custom Pricing</h2>
+      </div>
+      <div className="p-3 grid md:grid-cols-2 gap-4">
+        <div>
+          <h3 className="text-lg font-semibold mb-1 text-center md:text-left">1-Sided Pricing</h3>
+          <textarea
+            value={finalCustomPricingOneSided}
+            onChange={(e) => onTextChange('oneSided', e.target.value)}
+            className="font-mono border rounded p-2 w-full dark:bg-slate-700 dark:border-slate-600 whitespace-pre"
+            rows="10"
+            placeholder="Qty ..... Price"
+          />
+        </div>
+        <div>
+          <h3 className="text-lg font-semibold mb-1 text-center md:text-left">2-Sided Pricing</h3>
+          <textarea
+            value={finalCustomPricingTwoSided}
+            onChange={(e) => onTextChange('twoSided', e.target.value)}
+            className="font-mono border rounded p-2 w-full dark:bg-slate-700 dark:border-slate-600 whitespace-pre"
+            rows="10"
+            placeholder="Qty ..... Price"
+          />
+        </div>
+      </div>
+    </section>
+  );
+};
+
 /* =========== APP =========== */
 function App() {
   const STYLE_OPTIONS = [
@@ -248,6 +280,8 @@ function App() {
   const [customAccountManager, setCustomAccountManager] = React.useState('');
   const [selectedPreparedBy, setSelectedPreparedBy] = React.useState(PREPARED_BY_OPTIONS[0]);
   const [customPreparedBy, setCustomPreparedBy] = React.useState('');
+  const [finalCustomPricingOneSided, setFinalCustomPricingOneSided] = React.useState("");
+  const [finalCustomPricingTwoSided, setFinalCustomPricingTwoSided] = React.useState("");
 
   React.useEffect(() => {
     if (darkMode) {
@@ -312,6 +346,14 @@ function App() {
   React.useEffect(() => {
     setIncludeHandling(OUT <= 5);
   }, [OUT]);
+  
+  const handleFinalCustomTextChange = (side, newText) => {
+    if (side === 'oneSided') {
+      setFinalCustomPricingOneSided(newText);
+    } else if (side === 'twoSided') {
+      setFinalCustomPricingTwoSided(newText);
+    }
+  };  
 
   const toggleEarnings = (qty) => {
     setShowEarnings(prev => ({ ...prev, [qty]: !prev[qty] }));
@@ -1083,6 +1125,15 @@ function App() {
               </div>
             </section>
           </div>
+		  
+          {/* === Add the new FinalCustomPricingTable here === */}
+          <FinalCustomPricingTable
+            finalCustomPricingOneSided={finalCustomPricingOneSided}
+            finalCustomPricingTwoSided={finalCustomPricingTwoSided}
+            onTextChange={handleFinalCustomTextChange}
+          />
+          {/* === End of FinalCustomPricingTable === */}
+		  
           <button type="button" onClick={() => setIsQuoteFormVisible(!isQuoteFormVisible)} className="mt-4 px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">Prepare Client Quote</button>
           <div id="quoteFormContainer" className={
             `mt-4 p-4 border border-gray-300 rounded transition-all duration-500 ease-in-out ${
