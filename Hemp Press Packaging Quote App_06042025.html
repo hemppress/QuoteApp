@@ -496,7 +496,7 @@ function App() {
       <div className="flex justify-end mb-4 gap-2">
         <button
           type="button"
-          onClick={() => { setIsQuoteFormVisible(!isQuoteFormVisible); setAreCustomCostingCardsCollapsed(!areCustomCostingCardsCollapsed); }}
+          onClick={() => setIsQuoteFormVisible(!isQuoteFormVisible)}
           className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700"
         >
           Prepare Client Quote
@@ -913,7 +913,6 @@ function App() {
           {console.log('Quote form props:', { isQuoteFormVisible, areCustomCostingCardsCollapsed })}
           {isQuoteFormVisible && (
             <div id="quoteFormContainer" className="mt-4 p-4 border border-gray-300 rounded transition-all duration-500 ease-in-out max-h-screen opacity-100 overflow-y-auto">
-              {!areCustomCostingCardsCollapsed && (
                 <>
                   {/* Client Name */}
                   <div className="mb-4">
@@ -1267,7 +1266,6 @@ function App() {
                     </div>
                   )}
                 </>
-              )}
             </div>
           )}
         </div>
