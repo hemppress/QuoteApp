@@ -186,6 +186,49 @@ function bestBreaks(OUT, overage) {
   return [...set].sort((a, b) => a - b);
 }
 
+function parsePricingData(textOneSided, textTwoSided) {
+  const parsedOneSided = {};
+  const parsedTwoSided = {};
+  const lineRegex = /([\d,]+)\s*\.*\s*\$?([\d\.]+)/;
+
+  if (textOneSided) {
+    textOneSided.split('\n').forEach(line => {
+      const match = line.match(lineRegex);
+      const qtyStr = match && match[1] ? match[1].replace(/,/g, '') : null;
+      const qtyNum = qtyStr ? parseInt(qtyStr) : NaN;
+      if (match && match[1] && match[2] && !isNaN(qtyNum)) {
+        parsedOneSided[qtyNum] = match[2];
+      }
+    });
+  }
+
+  if (textTwoSided) {
+    textTwoSided.split('\n').forEach(line => {
+      const match = line.match(lineRegex);
+      const qtyStr = match && match[1] ? match[1].replace(/,/g, '') : null;
+      const qtyNum = qtyStr ? parseInt(qtyStr) : NaN;
+      if (match && match[1] && match[2] && !isNaN(qtyNum)) {
+        parsedTwoSided[qtyNum] = match[2];
+      }
+    });
+  }
+
+  const allQuantities = new Set([
+    ...Object.keys(parsedOneSided).map(Number),
+    ...Object.keys(parsedTwoSided).map(Number)
+  ]);
+
+  const sortedQuantities = Array.from(allQuantities).sort((a, b) => a - b);
+
+  const combinedPricing = sortedQuantities.map(qty => ({
+    qty: qty,
+    priceOneSided: parsedOneSided[qty] || "0.00",
+    priceTwoSided: parsedTwoSided[qty] || "0.00"
+  }));
+
+  return combinedPricing;
+}
+
 /* ===== Components ===== */
 const Label = ({ children }) => <label className="flex flex-col gap-1 text-sm">{children}</label>;
 const Num = props => <input type="number" className="border rounded px-2 py-1 w-full dark:bg-slate-700 dark:border-slate-600" {...props} />;
@@ -247,10 +290,12 @@ function App() {
     'Eugene, OR',
     'Custom'
   ];
-  const ADDITIONAL_CHARGE_OPTIONS = ['Cutting Die(s)', 'Embossing Die(s)', 'None'];
   const DISCLAIMER_TEXT = "Please note: This quote is an estimate and subject to change based on final artwork, material availability, and other factors. All orders are subject to Hemp Press Packaging's standard terms and conditions.";
   const ACCOUNT_MANAGER_OPTIONS = ['Matt Glyer', 'Myron Chadowitz', 'T’halia Martinez', 'Custom'];
   const PREPARED_BY_OPTIONS = ['MG', 'MC', 'TM', 'Custom'];
+
+  const CHARGE_TYPES = ["Cutting Die", "Foil Die", "Embossing Die", "Debossing Die", "Spot Gloss Plate"];
+  const PRICE_TIERS = ["$180", "$280", "$360", "Custom"];
 
   const [darkMode, setDarkMode] = React.useState(() => {
     const savedTheme = localStorage.getItem('theme');
@@ -272,10 +317,7 @@ function App() {
   const [customPrinting, setCustomPrinting] = React.useState('');
   const [selectedFreight, setSelectedFreight] = React.useState(FREIGHT_FOB_OPTIONS[0]);
   const [customFreight, setCustomFreight] = React.useState('');
-  const [selectedAdditionalCharges, setSelectedAdditionalCharges] = React.useState([]);
-  const [customAdditionalChargeName, setCustomAdditionalChargeName] = React.useState('');
-  const [customAdditionalChargeValue, setCustomAdditionalChargeValue] = React.useState('');
-  const [showCustomAdditionalChargeInput, setShowCustomAdditionalChargeInput] = React.useState(false);
+  const [additionalChargesList, setAdditionalChargesList] = React.useState([]);
   const [disclaimerEnabled, setDisclaimerEnabled] = React.useState(true);
   const [selectedAccountManager, setSelectedAccountManager] = React.useState(ACCOUNT_MANAGER_OPTIONS[0]);
   const [customAccountManager, setCustomAccountManager] = React.useState('');
@@ -285,6 +327,8 @@ function App() {
   const [finalCustomPricingTwoSided, setFinalCustomPricingTwoSided] = React.useState("");
   const [allTogglesOn, setAllTogglesOn] = React.useState(false);
   const [areCustomCostingCardsCollapsed, setAreCustomCostingCardsCollapsed] = React.useState(false);
+  const [hasWindowOption, setHasWindowOption] = React.useState("Omit");
+  const [closureTypeOption, setClosureTypeOption] = React.useState("Omit");
 
   React.useEffect(() => {
     if (darkMode) {
@@ -349,14 +393,14 @@ function App() {
   React.useEffect(() => {
     setIncludeHandling(OUT <= 5);
   }, [OUT]);
-  
+
   const handleFinalCustomTextChange = (side, newText) => {
     if (side === 'oneSided') {
       setFinalCustomPricingOneSided(newText);
     } else if (side === 'twoSided') {
       setFinalCustomPricingTwoSided(newText);
     }
-  };  
+  };
 
   const toggleEarnings = (qty) => {
     setShowEarnings(prev => ({ ...prev, [qty]: !prev[qty] }));
@@ -490,6 +534,136 @@ function App() {
       }
       return `${qObj.value.toLocaleString().padEnd(7,' ')} ........... $${compute(p)[side].sellPc.toFixed(2)}`;
     }).join('\n');
+
+    const handleAddCharge = () => {
+      setAdditionalChargesList(prevList => [
+        ...prevList,
+        {
+          id: Date.now().toString(), // Simple unique ID
+          type: CHARGE_TYPES[0],     // Default to the first charge type
+          priceTier: PRICE_TIERS[0], // Default to the first price tier
+          customPrice: ''
+        }
+      ]);
+    };
+
+    const handleChargeChange = (index, field, value) => {
+      setAdditionalChargesList(prevList =>
+        prevList.map((item, i) =>
+          i === index ? { ...item, [field]: value } : item
+        )
+      );
+    };
+
+    const handleRemoveCharge = (index) => {
+      setAdditionalChargesList(prevList => prevList.filter((_, i) => i !== index));
+    };
+
+const generateQuotePDF = () => {
+    const { jsPDF } = window.jspdf; // Ensure jsPDF is accessed correctly
+    const doc = new jsPDF();
+
+    let yPos = 20; // Initial Y position for text
+
+    // Title
+    doc.setFontSize(18);
+    doc.text("Client Quote", 105, yPos, { align: "center" });
+    yPos += 10;
+
+    // General Information Section
+    doc.setFontSize(12);
+    const quoteDetails = [
+      { label: "Client Name", value: clientName },
+      { label: "Quote Date", value: quoteDate },
+      { label: "Description", value: description },
+      { label: "Size (LxWxH)", value: `${size.length || 'N/A'} x ${size.width || 'N/A'} x ${size.height || 'N/A'}` },
+      { label: "Includes Insert", value: includesInsert ? "Yes" : "No" },
+      { label: "Style", value: selectedStyle === 'Custom' && customStyle ? `${selectedStyle} (${customStyle})` : selectedStyle },
+      { label: "DID#", value: didNumber },
+      { label: "Material", value: selectedMaterial === 'Custom' && customMaterial ? `${selectedMaterial} (${customMaterial})` : selectedMaterial },
+      { label: "Printing", value: selectedPrinting === 'Custom' && customPrinting ? `${selectedPrinting} (${customPrinting})` : selectedPrinting },
+      { label: "Freight FOB", value: selectedFreight === 'Custom' && customFreight ? `${selectedFreight} (${customFreight})` : selectedFreight },
+      { label: "Comments", value: comments }
+    ];
+
+    quoteDetails.forEach(detail => {
+      if (detail.value) { // Only add if value exists
+        doc.text(`${detail.label}: ${detail.value}`, 14, yPos);
+        yPos += 7;
+      }
+    });
+
+    if (hasWindowOption && hasWindowOption !== "Omit") {
+      doc.text(`Has Window: ${hasWindowOption}`, 14, yPos);
+      yPos += 7;
+    }
+
+    if (closureTypeOption && closureTypeOption !== "Omit") {
+      doc.text(`Box Closure: ${closureTypeOption}`, 14, yPos);
+      yPos += 7;
+    }
+    yPos += 5; // Margin before pricing table
+
+    // Pricing Table
+    const pricingData = parsePricingData(finalCustomPricingOneSided, finalCustomPricingTwoSided);
+    if (pricingData.length > 0) {
+      doc.autoTable({
+        startY: yPos,
+        head: [['Quantity', '1 Sided Price', '2 Sided Price']],
+        body: pricingData.map(item => [
+          item.qty.toLocaleString(),
+          `$${item.priceOneSided}`,
+          `$${item.priceTwoSided}`
+        ]),
+        theme: 'striped',
+        headStyles: { fillColor: [75, 75, 75] }, // Dark grey for header
+        margin: { left: 14, right: 14 },
+      });
+      yPos = doc.lastAutoTable.finalY + 10;
+    } else {
+      doc.text("No pricing information provided.", 14, yPos);
+      yPos += 10;
+    }
+
+    // Additional Charges
+    if (additionalChargesList && additionalChargesList.length > 0) {
+      doc.setFontSize(14); // Or a suitable size
+      doc.text("Additional Charges", 14, yPos);
+      yPos += 7;
+      doc.setFontSize(10); // Or a suitable size for items
+
+      additionalChargesList.forEach(charge => {
+        let priceDisplay = "";
+        if (charge.priceTier === 'Custom') {
+          priceDisplay = charge.customPrice ? `$${charge.customPrice}` : "$0.00 (Custom)";
+        } else {
+          priceDisplay = charge.priceTier; // Assumes priceTier is like "$180"
+        }
+        doc.text(`- ${charge.type}: ${priceDisplay}`, 14, yPos);
+        yPos += 5; // Spacing for each charge item
+      });
+      yPos += 5; // Margin after the list of additional charges
+    }
+
+    // Disclaimer
+    if (disclaimerEnabled) {
+      doc.setFontSize(10);
+      const disclaimerLines = doc.splitTextToSize(DISCLAIMER_TEXT, 180); // 180mm width
+      doc.text(disclaimerLines, 14, yPos);
+      yPos += (disclaimerLines.length * 5) + 5; // Adjust yPos based on lines
+    }
+
+    // Prepared By & Account Manager
+    doc.setFontSize(12);
+    const prepBy = selectedPreparedBy === 'Custom' && customPreparedBy ? customPreparedBy : selectedPreparedBy;
+    const accMgr = selectedAccountManager === 'Custom' && customAccountManager ? customAccountManager : selectedAccountManager;
+    doc.text(`Prepared By: ${prepBy}`, 14, yPos);
+    yPos += 7;
+    doc.text(`Account Manager: ${accMgr}`, 14, yPos);
+    yPos += 10;
+
+    doc.save('Client-Quote.pdf');
+  };
 
   return (
     <ErrorBoundary>
@@ -951,6 +1125,52 @@ function App() {
                     </div>
                   </div>
 
+                  {/* Has Window Radio Group */}
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Has Window</label>
+                    <div className="mt-2 flex items-center space-x-4">
+                      {["Yes", "No", "Omit"].map(option => (
+                        <div key={option} className="flex items-center">
+                          <input
+                            type="radio"
+                            id={`hasWindow${option}`}
+                            name="hasWindowOption"
+                            value={option}
+                            checked={hasWindowOption === option}
+                            onChange={() => setHasWindowOption(option)}
+                            className="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:focus:ring-indigo-600"
+                          />
+                          <label htmlFor={`hasWindow${option}`} className="ml-2 block text-sm text-gray-900 dark:text-gray-300">
+                            {option}
+                          </label>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Box Closure Radio Group */}
+                  <div className="mb-4">
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Box Closure</label>
+                    <div className="mt-2 flex items-center space-x-4">
+                      {["Glued", "Self Locking", "Omit"].map(option => (
+                        <div key={option} className="flex items-center">
+                          <input
+                            type="radio"
+                            id={`closureType${option.replace(/\s+/g, '')}`}
+                            name="closureTypeOption"
+                            value={option}
+                            checked={closureTypeOption === option}
+                            onChange={() => setClosureTypeOption(option)}
+                            className="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:focus:ring-indigo-600"
+                          />
+                          <label htmlFor={`closureType${option.replace(/\s+/g, '')}`} className="ml-2 block text-sm text-gray-900 dark:text-gray-300">
+                            {option}
+                          </label>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
                   {/* Includes Insert */}
                   <div className="mb-4">
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Includes Insert</label>
@@ -1124,55 +1344,66 @@ function App() {
                   {/* Additional Charges Section */}
                   <div className="mb-4">
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Additional Charges</label>
-                    <div className="mt-2 space-y-2">
-                      {ADDITIONAL_CHARGE_OPTIONS.map(charge => (
-                        <div key={charge} className="flex items-center">
-                          <input
-                            type="checkbox"
-                            id={`charge-${charge}`}
-                            name={charge}
-                            checked={selectedAdditionalCharges.includes(charge)}
-                            onChange={() => handleAdditionalChargeChange(charge)}
-                            className="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:focus:ring-indigo-600 rounded"
-                          />
-                          <label htmlFor={`charge-${charge}`} className="ml-2 block text-sm text-gray-900 dark:text-gray-300">
-                            {charge}
-                          </label>
+                    <div className="mt-2 space-y-3">
+                      {additionalChargesList.map((charge, index) => (
+                        <div key={charge.id} className="p-3 border border-gray-300 dark:border-gray-600 rounded-md space-y-2">
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            <div>
+                              <label htmlFor={`chargeType-${index}`} className="block text-xs font-medium text-gray-500 dark:text-gray-400">Charge Type</label>
+                              <select
+                                id={`chargeType-${index}`}
+                                value={charge.type}
+                                onChange={(e) => handleChargeChange(index, 'type', e.target.value)}
+                                className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
+                              >
+                                {CHARGE_TYPES.map(typeOption => (
+                                  <option key={typeOption} value={typeOption}>{typeOption}</option>
+                                ))}
+                              </select>
+                            </div>
+                            <div>
+                              <label htmlFor={`priceTier-${index}`} className="block text-xs font-medium text-gray-500 dark:text-gray-400">Price Tier</label>
+                              <select
+                                id={`priceTier-${index}`}
+                                value={charge.priceTier}
+                                onChange={(e) => handleChargeChange(index, 'priceTier', e.target.value)}
+                                className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
+                              >
+                                {PRICE_TIERS.map(tierOption => (
+                                  <option key={tierOption} value={tierOption}>{tierOption}</option>
+                                ))}
+                              </select>
+                            </div>
+                          </div>
+                          {charge.priceTier === 'Custom' && (
+                            <div>
+                              <label htmlFor={`customPrice-${index}`} className="block text-xs font-medium text-gray-500 dark:text-gray-400">Custom Price ($)</label>
+                              <input
+                                type="number"
+                                id={`customPrice-${index}`}
+                                value={charge.customPrice}
+                                onChange={(e) => handleChargeChange(index, 'customPrice', e.target.value)}
+                                placeholder="Enter custom price"
+                                className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
+                              />
+                            </div>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveCharge(index)}
+                            className="px-3 py-1 text-sm bg-red-500 text-white rounded hover:bg-red-600 dark:hover:bg-red-500"
+                          >
+                            Remove Charge
+                          </button>
                         </div>
                       ))}
                       <button
                         type="button"
-                        onClick={() => setShowCustomAdditionalChargeInput(prev => !prev)}
+                        onClick={handleAddCharge}
                         className="mt-2 px-3 py-1 text-sm bg-indigo-500 text-white rounded hover:bg-indigo-600 dark:hover:bg-indigo-500"
                       >
-                        {showCustomAdditionalChargeInput ? 'Cancel Custom Charge' : 'Add Custom Charge'}
+                        Add New Charge
                       </button>
-                      {showCustomAdditionalChargeInput && (
-                        <div className="mt-2 space-y-2 p-3 border border-gray-300 dark:border-gray-600 rounded-md">
-                          <div>
-                            <label htmlFor="customAdditionalChargeName" className="block text-xs font-medium text-gray-500 dark:text-gray-400">Custom Charge Name</label>
-                            <input
-                              type="text"
-                              id="customAdditionalChargeName"
-                              value={customAdditionalChargeName}
-                              onChange={(e) => setCustomAdditionalChargeName(e.target.value)}
-                              placeholder="Enter charge name"
-                              className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
-                            />
-                          </div>
-                          <div>
-                            <label htmlFor="customAdditionalChargeValue" className="block text-xs font-medium text-gray-500 dark:text-gray-400">Custom Charge Value ($)</label>
-                            <input
-                              type="number"
-                              id="customAdditionalChargeValue"
-                              value={customAdditionalChargeValue}
-                              onChange={(e) => setCustomAdditionalChargeValue(e.target.value)}
-                              placeholder="Enter charge value"
-                              className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
-                            />
-                          </div>
-                        </div>
-                      )}
                     </div>
                   </div>
 
@@ -1265,6 +1496,17 @@ function App() {
                       />
                     </div>
                   )}
+
+                  {/* Create PDF Button */}
+                  <div className="mt-6 mb-4">
+                    <button
+                      type="button"
+                      onClick={generateQuotePDF}
+                      className="w-full px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600 dark:bg-green-600 dark:hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-opacity-50"
+                    >
+                      Create Client Quote PDF
+                    </button>
+                  </div>
                 </>
             </div>
           )}
@@ -1516,7 +1758,7 @@ function App() {
               </div>
             </section>
           </div>
-		  
+
           {/* === Add the new FinalCustomPricingTable here === */}
           <FinalCustomPricingTable
             finalCustomPricingOneSided={finalCustomPricingOneSided}
@@ -1524,7 +1766,7 @@ function App() {
             onTextChange={handleFinalCustomTextChange}
           />
           {/* === End of FinalCustomPricingTable === */}
-		  
+
         </div>
       </div>
     </ErrorBoundary>
@@ -1542,5 +1784,3 @@ try {
   </script>
 </body>
 </html>
-
-[end of Hemp Press Packaging Quote App_06042025.html]
