@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en" class="">
 <head>
@@ -70,13 +71,28 @@ const RATES = {
     MACHINE:{label:'Machine Glue', rates:{Standard:0.04,Complex:0.06}},
   },
   LOWEST_PRINT:{'1':0.32,'2':0.59},
-  MARGINS:[0.60,0.50,0.40,0.30,0.25,0.15],
+  MARGINS:[0.50,0.40,0.30,0.25,0.15,0.60,0.65],
 };
 
 /* ========= UTILS ========= */
-const ceil=Math.ceil;
-const round2=n=>+(Math.round(n*100)/100).toFixed(2);
-const tierPrice=(ps,side)=>RATES.PRINT_TIERS[side].find(t=>ps>=t.min&&ps<=t.max)?.price ?? RATES.PRINT_TIERS[side].at(-1).price;
+const ceil = Math.ceil;
+
+// Always round UP to a fixed decimal precision (e.g. 3 decimals => 0.000)
+const ceilTo = (n, decimals = 3) => {
+  const f = Math.pow(10, decimals);
+  // tiny epsilon helps avoid floating artifacts like 1.23000000004 causing an extra cent
+  const eps = 1e-12;
+  return Math.ceil((n + eps) * f) / f;
+};
+
+// Keep for cases you still want classic 2-dec rounding (not used for pricing tables now)
+const roundTo = (n, decimals = 2) => {
+  const f = Math.pow(10, decimals);
+  return +(Math.round(n * f) / f).toFixed(decimals);
+};
+
+const tierPrice = (ps, side) =>
+  RATES.PRINT_TIERS[side].find(t => ps >= t.min && ps <= t.max)?.price ?? RATES.PRINT_TIERS[side].at(-1).price;
 
 /* ========== COST ENGINE ========== */
 function compute(params){
@@ -84,20 +100,25 @@ function compute(params){
   const customOversQty = params.customOversQty !== '' && params.customOversQty >= 0 ? +params.customOversQty : 0;
   const effQty = customOversQty > 0 ? (params.qty + customOversQty) : (params.qty * (1 + overage / 100));
   const effectiveOveragePercent = customOversQty > 0 ? (customOversQty / params.qty * 100) : overage;
+
   const pressSheets = Math.max(5, ceil(effQty / params.OUT));
   const paperCost = pressSheets * params.paper.cost;
+
   const printCostPS = params.includePrint ? (params.printOverride1Sided ?? tierPrice(pressSheets,'1')) : 0;
   const printCostPS2 = params.includePrint ? (params.printOverride2Sided ?? tierPrice(pressSheets,'2')) : 0;
   const print1 = pressSheets * printCostPS;
   const print2 = pressSheets * printCostPS2;
+
   const dieM = RATES.DIE_MACHINES[params.die.machine];
   const action = params.die.customAction ?? dieM.action;
   const setup = params.die.customSetup ?? dieM.setup;
   const stripPerPc = params.windows > 0 ? (dieM.stripping + params.windows * 0.015) : 0;
   const actionPerPc = action / params.UP;
+
   const dieVar = params.includeDie ? effQty * (actionPerPc + stripPerPc) : 0;
   const dieSetupCostPerPc = params.includeDie ? setup / effQty : 0;
   const dieCost = dieVar + (params.includeDie ? setup : 0);
+
   let glueCostMarkup = 0;
   let glueCostEx = 0;
   if (params.glue.include) {
@@ -115,6 +136,7 @@ function compute(params){
       }
     }
   }
+
   let preCost = 0;
   if (params.includePrepress) {
     if (params.prepressOverrideCost !== null) {
@@ -123,9 +145,12 @@ function compute(params){
       preCost = 50 + Math.max(0, params.SKUs - 1) * 35;
     }
   }
+
   const handlingRate = params.includeHandling ? (params.handleOverride !== '' ? +params.handleOverride : (params.OUT <= 5 ? 0.02 : 0)) : 0;
   const handlingCost = handlingRate * effQty;
+
   const margin = params.useMargin ? params.margin : 0;
+
   let totalCustomCost = 0;
   let customCostPerPieceTotal = 0;
   if (params.includeCustomCost) {
@@ -137,8 +162,8 @@ function compute(params){
   function sideTotals(printCostSide) {
     let markupBase = printCostSide + dieCost + glueCostMarkup + customCostPerPieceTotal;
     let excluded = glueCostEx + preCost + handlingCost;
+
     if (params.paperAtCost) {
-      markupBase += 0;
       excluded += paperCost;
     } else if (params.splitPaperCost) {
       const halfPaperCost = paperCost / 2;
@@ -147,9 +172,16 @@ function compute(params){
     } else {
       markupBase += paperCost;
     }
+
+    // Raw sell price per piece
     const sellPcRaw = (markupBase / (1 - margin) + excluded) / params.qty;
-    const sellPc = round2(sellPcRaw);
-    const sellTotal = round2(sellPc * params.qty);
+
+    // REQUIRED: round UP to 3 decimals (0.000)
+    const sellPc = ceilTo(sellPcRaw, 3);
+
+    // Keep totals money-safe: round UP to cents
+    const sellTotal = ceilTo(sellPc * params.qty, 2);
+
     const costBreak = {
       paper: paperCost / params.qty,
       print: printCostSide / params.qty,
@@ -161,17 +193,25 @@ function compute(params){
       outside: (paperCost + printCostSide) / params.qty,
       inside: (dieCost + glueCostMarkup + glueCostEx + preCost + handlingCost) / params.qty
     };
+
     if (params.includeCustomCost && totalCustomCost > 0) {
       const keyForCustomCost = params.customCostName || 'Custom Cost';
       costBreak[keyForCustomCost] = totalCustomCost / params.qty;
     }
+
     return { sellPc, sellTotal, costBreak, effectiveOveragePercent };
   }
 
-  return { pressSheets,
-           one: sideTotals(print1),
-           two: sideTotals(print2),
-           addOn: round2(sideTotals(print2).sellPc - sideTotals(print1).sellPc) };
+  const one = sideTotals(print1);
+  const two = sideTotals(print2);
+
+  return {
+    pressSheets,
+    one,
+    two,
+    // Add-on should also respect the 0.000 round-up
+    addOn: ceilTo(two.sellPc - one.sellPc, 3)
+  };
 }
 
 /* ====== BEST-PRICE notched to 100 ====== */
@@ -343,7 +383,6 @@ function App() {
   const [customCostSetup, setCustomCostSetup] = React.useState('');
   const [showEarnings, setShowEarnings] = React.useState({});
   const [showCosts, setShowCosts] = React.useState({});
-  // const [allTogglesOn, setAllTogglesOn] = React.useState(false); // This was the line for the new state variable
 
   // Auto-toggle handling based on OUT
   React.useEffect(() => {
@@ -469,13 +508,16 @@ function App() {
     customCostSetup: customCostSetup ? +customCostSetup : 0,
   });
 
+  // Pricing tables: show 3 decimals, already rounded UP in compute()
   const fmtLines = (side) => quantities
     .filter(qObj => qObj.active)
-    .map(qObj => `${qObj.value.toLocaleString().padEnd(7,' ')} ........... $${compute(baseParams(qObj.value))[side].sellPc.toFixed(2)}`)
+    .map(qObj => `${qObj.value.toLocaleString().padEnd(7,' ')} ........... $${compute(baseParams(qObj.value))[side].sellPc.toFixed(3)}`)
     .join('\n');
 
   const bestQs = bestBreaks(OUT, overage);
-  const bestLines = (side) => bestQs.map(q => `${q.toLocaleString().padEnd(7,' ')} ........... $${compute(baseParams(q))[side].sellPc.toFixed(2)}`).join('\n');
+  const bestLines = (side) => bestQs
+    .map(q => `${q.toLocaleString().padEnd(7,' ')} ........... $${compute(baseParams(q))[side].sellPc.toFixed(3)}`)
+    .join('\n');
 
   const lowLines = (side) => quantities
     .filter(qObj => qObj.active)
@@ -488,7 +530,7 @@ function App() {
         p.printOverride1Sided = RATES.LOWEST_PRINT['1'];
         p.printOverride2Sided = RATES.LOWEST_PRINT['2'];
       }
-      return `${qObj.value.toLocaleString().padEnd(7,' ')} ........... $${compute(p)[side].sellPc.toFixed(2)}`;
+      return `${qObj.value.toLocaleString().padEnd(7,' ')} ........... $${compute(p)[side].sellPc.toFixed(3)}`;
     }).join('\n');
 
   return (
@@ -528,9 +570,11 @@ function App() {
           {allTogglesOn ? 'Hide Profit & Costs' : 'Show Profit & Costs'}
         </button>
       </div>
+
       <div className="grid md:grid-cols-2 gap-8">
         <div className="space-y-6">
           <h1 className="text-2xl font-bold">Custom Costing</h1>
+
           <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
             <div className="bg-indigo-500 text-white rounded-t-xl p-2">
               <h2 className="text-xl font-bold">Select Order Quantities</h2>
@@ -600,6 +644,7 @@ function App() {
             </div>
             )}
           </section>
+
           <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
             <div className="bg-indigo-500 text-white rounded-t-xl p-2">
               <h2 className="text-xl font-bold">Overage</h2>
@@ -640,6 +685,7 @@ function App() {
             </div>
             )}
           </section>
+
           <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
             <div className="bg-indigo-500 text-white rounded-t-xl p-2">
               <h2 className="text-xl font-bold">Piece Layout</h2>
@@ -653,6 +699,7 @@ function App() {
             </div>
             )}
           </section>
+
           <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
             <div className="bg-indigo-500 text-white rounded-t-xl p-2">
               <h2 className="text-xl font-bold">Paper</h2>
@@ -695,6 +742,7 @@ function App() {
             </div>
             )}
           </section>
+
           <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
             <div className="bg-indigo-500 text-white rounded-t-xl p-2">
               <h2 className="text-xl font-bold">Printing</h2>
@@ -720,6 +768,7 @@ function App() {
             </div>
             )}
           </section>
+
           <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
             <div className="bg-indigo-500 text-white rounded-t-xl p-2">
               <h2 className="text-xl font-bold">Die-Cutting</h2>
@@ -761,6 +810,7 @@ function App() {
             </div>
             )}
           </section>
+
           <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
             <div className="bg-indigo-500 text-white rounded-t-xl p-2">
               <h2 className="text-xl font-bold">Glue</h2>
@@ -805,6 +855,7 @@ function App() {
             </div>
             )}
           </section>
+
           <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
             <div className="bg-indigo-500 text-white rounded-t-xl p-2">
               <h2 className="text-xl font-bold">Handling</h2>
@@ -822,6 +873,7 @@ function App() {
             </div>
             )}
           </section>
+
           <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
             <div className="bg-indigo-500 text-white rounded-t-xl p-2">
               <h2 className="text-xl font-bold">Custom Cost</h2>
@@ -856,6 +908,7 @@ function App() {
             </div>
             )}
           </section>
+
           <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
             <div className="bg-indigo-500 text-white rounded-t-xl p-2">
               <h2 className="text-xl font-bold">Pre-press / Proofing</h2>
@@ -886,6 +939,7 @@ function App() {
             </div>
             )}
           </section>
+
           <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
             <div className="bg-indigo-500 text-white rounded-t-xl p-2">
               <h2 className="text-xl font-bold">Margin</h2>
@@ -909,6 +963,7 @@ function App() {
             </div>
             )}
           </section>
+
           {/* MODIFIED_QUOTE_FORM_RENDERING_LOGIC */}
           {console.log('Quote form props:', { isQuoteFormVisible, areCustomCostingCardsCollapsed })}
           {isQuoteFormVisible && (
@@ -1271,23 +1326,28 @@ function App() {
             </div>
           )}
         </div>
+
         <div className="space-y-6">
           <h1 className="text-2xl font-bold">Custom Pricing</h1>
+
           {quantities.filter(qObj => qObj.active).map(qObj => {
             const q = qObj.value;
             const res = compute(baseParams(q));
             const { one, two, addOn } = res;
+
             const costBreakOneWithoutSummaries = Object.fromEntries(
               Object.entries(res.one.costBreak).filter(([key]) => key !== 'outside' && key !== 'inside')
             );
             const costBreakTwoWithoutSummaries = Object.fromEntries(
               Object.entries(res.two.costBreak).filter(([key]) => key !== 'outside' && key !== 'inside')
             );
+
             const totalCostPerPieceOne = Object.values(costBreakOneWithoutSummaries).reduce((a, b) => a + b, 0);
             const costBreakdownStringOne = Object.entries(costBreakOneWithoutSummaries)
               .filter(([key, value]) => value > 0.000001)
               .map(([key, value]) => `${key.charAt(0).toUpperCase() + key.slice(1)}: $${value.toFixed(4)}`)
               .join(' + ');
+
             let percentageBreakdownStringOne = '';
             if (totalCostPerPieceOne > 0) {
               const costPercentagesOne = Object.entries(costBreakOneWithoutSummaries)
@@ -1297,15 +1357,18 @@ function App() {
                   percentage: (value / totalCostPerPieceOne) * 100,
                 }))
                 .sort((a, b) => b.percentage - a.percentage);
+
               percentageBreakdownStringOne = costPercentagesOne
                 .map(item => `${item.name}: ${item.percentage.toFixed(1)}%`)
                 .join(' + ');
             }
+
             const totalCostPerPieceTwo = Object.values(costBreakTwoWithoutSummaries).reduce((a, b) => a + b, 0);
             const costBreakdownStringTwo = Object.entries(costBreakTwoWithoutSummaries)
               .filter(([key, value]) => value > 0.000001)
               .map(([key, value]) => `${key.charAt(0).toUpperCase() + key.slice(1)}: $${value.toFixed(4)}`)
               .join(' + ');
+
             let percentageBreakdownStringTwo = '';
             if (totalCostPerPieceTwo > 0) {
               const costPercentagesTwo = Object.entries(costBreakTwoWithoutSummaries)
@@ -1315,23 +1378,29 @@ function App() {
                   percentage: (value / totalCostPerPieceTwo) * 100,
                 }))
                 .sort((a, b) => b.percentage - a.percentage);
+
               percentageBreakdownStringTwo = costPercentagesTwo
                 .map(item => `${item.name}: ${item.percentage.toFixed(1)}%`)
                 .join(' + ');
             }
+
             const currentParams = baseParams(q);
             const actualMarginUsed = currentParams.useMargin ? currentParams.margin : 0;
+
             const earningsPerPcOne = res.one.sellPc - totalCostPerPieceOne;
             const earningsTotalOne = earningsPerPcOne * q;
             const earningsPerPcTwo = res.two.sellPc - totalCostPerPieceTwo;
             const earningsTotalTwo = earningsPerPcTwo * q;
+
             const outsideCostPercentageOne = totalCostPerPieceOne > 0 ? (res.one.costBreak.outside / totalCostPerPieceOne) * 100 : 0;
             const insideCostPercentageOne = totalCostPerPieceOne > 0 ? (res.one.costBreak.inside / totalCostPerPieceOne) * 100 : 0;
             const outsideCostPercentageTwo = totalCostPerPieceTwo > 0 ? (res.two.costBreak.outside / totalCostPerPieceTwo) * 100 : 0;
             const insideCostPercentageTwo = totalCostPerPieceTwo > 0 ? (res.two.costBreak.inside / totalCostPerPieceTwo) * 100 : 0;
+
             const effectiveOverageDisplay = customOversQty !== '' && customOversQty >= 0
               ? `${customOversQty} pcs (${res.one.effectiveOveragePercent.toFixed(1)}%)`
               : `${res.one.effectiveOveragePercent.toFixed(1)}%`;
+
             return (
               <motion.div key={q} className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow space-y-2" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
                 <div className="bg-indigo-500 text-white rounded-t-xl p-2 flex justify-between items-center">
@@ -1351,15 +1420,18 @@ function App() {
                     </button>
                   </div>
                 </div>
+
                 <div className="p-3">
                   <table className="w-full text-sm mb-1">
                     <thead><tr className="text-left"><th></th><th>$ / pc</th><th>Total</th></tr></thead>
                     <tbody>
-                      <tr><td>1-Sided</td><td>${res.one.sellPc.toFixed(2)}</td><td>${res.one.sellTotal.toFixed(2)}</td></tr>
-                      <tr><td>2-Sided</td><td>${res.two.sellPc.toFixed(2)}</td><td>${res.two.sellTotal.toFixed(2)}</td></tr>
+                      <tr><td>1-Sided</td><td>${res.one.sellPc.toFixed(3)}</td><td>${res.one.sellTotal.toFixed(2)}</td></tr>
+                      <tr><td>2-Sided</td><td>${res.two.sellPc.toFixed(3)}</td><td>${res.two.sellTotal.toFixed(2)}</td></tr>
                     </tbody>
                   </table>
-                  <p className="text-sm">2-Sided add-on: +${addOn.toFixed(2)} / pc</p>
+
+                  <p className="text-sm">2-Sided add-on: +${addOn.toFixed(3)} / pc</p>
+
                   {showEarnings[q] && (
                     <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-600">
                       <div className="grid md:grid-cols-2 gap-4">
@@ -1372,10 +1444,10 @@ function App() {
                             Gross Profit: ${earningsTotalOne.toFixed(2)}
                           </p>
                           <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Profit $/pc: ${earningsPerPcOne.toFixed(2)}
+                            Profit $/pc: ${earningsPerPcOne.toFixed(3)}
                           </p>
                           <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Cost $/pc: ${totalCostPerPieceOne.toFixed(2)}
+                            Cost $/pc: ${totalCostPerPieceOne.toFixed(3)}
                           </p>
                         </div>
                         <div>
@@ -1387,15 +1459,16 @@ function App() {
                             Gross Profit: ${earningsTotalTwo.toFixed(2)}
                           </p>
                           <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Profit $/pc: ${earningsPerPcTwo.toFixed(2)}
+                            Profit $/pc: ${earningsPerPcTwo.toFixed(3)}
                           </p>
                           <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Cost $/pc: ${totalCostPerPieceTwo.toFixed(2)}
+                            Cost $/pc: ${totalCostPerPieceTwo.toFixed(3)}
                           </p>
                         </div>
                       </div>
                     </div>
                   )}
+
                   {showCosts[q] && (
                     <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-600">
                       <div className="grid md:grid-cols-2 gap-4">
@@ -1405,13 +1478,13 @@ function App() {
                             Direct Cost (External) / pc: ${res.one.costBreak.outside.toFixed(2)}
                           </p>
                           <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Direct Cost (External) %: ${(outsideCostPercentageOne.toFixed(2))}%
+                            Direct Cost (External) %: {(outsideCostPercentageOne.toFixed(2))}%
                           </p>
                           <p className="text-xs text-slate-600 dark:text-slate-400">
                             Direct Cost (Internal) / pc: ${res.one.costBreak.inside.toFixed(2)}
                           </p>
                           <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Direct Cost (Internal) %: ${(insideCostPercentageOne.toFixed(2))}%
+                            Direct Cost (Internal) %: {(insideCostPercentageOne.toFixed(2))}%
                           </p>
                           <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
                             Costs / pc (1-Sided): ${costBreakdownStringOne} = ${totalCostPerPieceOne.toFixed(4)}
@@ -1431,13 +1504,13 @@ function App() {
                             Direct Cost (External) / pc: ${res.two.costBreak.outside.toFixed(2)}
                           </p>
                           <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Direct Cost (External) %: ${(outsideCostPercentageTwo.toFixed(2))}%
+                            Direct Cost (External) %: {(outsideCostPercentageTwo.toFixed(2))}%
                           </p>
                           <p className="text-xs text-slate-600 dark:text-slate-400">
                             Direct Cost (Internal) / pc: ${res.two.costBreak.inside.toFixed(2)}
                           </p>
                           <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Direct Cost (Internal) %: ${(insideCostPercentageTwo.toFixed(2))}%
+                            Direct Cost (Internal) %: {(insideCostPercentageTwo.toFixed(2))}%
                           </p>
                           <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
                             Costs / pc (2-Sided): ${costBreakdownStringTwo} = ${totalCostPerPieceTwo.toFixed(4)}
@@ -1454,6 +1527,7 @@ function App() {
                       </div>
                     </div>
                   )}
+
                   <p className="text-sm font-bold text-slate-600 dark:text-slate-400 mt-2">
                     Press-sheets incl. overage: {res.pressSheets}
                   </p>
@@ -1461,6 +1535,7 @@ function App() {
               </motion.div>
             );
           })}
+
           <div className="grid md:grid-cols-2 gap-4">
             <div>
               <section className="bg-white dark:bg-slate-800 rounded-xl shadow">
@@ -1483,6 +1558,7 @@ function App() {
               </section>
             </div>
           </div>
+
           <div className="grid md:grid-cols-2 gap-4">
             <div>
               <section className="bg-white dark:bg-slate-800 rounded-xl shadow">
@@ -1505,6 +1581,7 @@ function App() {
               </section>
             </div>
           </div>
+
           <div>
             <section className="bg-white dark:bg-slate-800 rounded-xl shadow">
               <div className="bg-indigo-500 text-white rounded-t-xl p-2">
@@ -1545,4 +1622,4 @@ try {
 </body>
 </html>
 
-[end of Hemp Press Packaging Quote App_06042025.html]
+<!-- [end of Hemp Press Packaging Quote App_02162026.html] -->
