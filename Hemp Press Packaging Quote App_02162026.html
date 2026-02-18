@@ -1,1625 +1,636 @@
-
 <!DOCTYPE html>
-<html lang="en" class="">
+<html lang="en" class="dark">
 <head>
   <meta charset="UTF-8" />
-  <title>Cost Calculator</title>
-
-  <!-- Tailwind with dark mode class strategy -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Print Shop Quote App</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
-    tailwind.config = {
-      darkMode: 'class'
-    }
+    tailwind.config = { darkMode: 'class' };
   </script>
-
-  <!-- React 18 + Babel -->
   <script src="https://unpkg.com/react@18/umd/react.production.min.js" defer></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" defer></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js" defer></script>
-
-  <!-- Framer-motion -->
-  <script src="https://unpkg.com/framer-motion@11/dist/framer-motion.umd.js" defer></script>
-
-  <!-- jsPDF + AutoTable -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" defer></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.25/jspdf.plugin.autotable.min.js" defer></script>
 </head>
-<body class="bg-slate-100 text-slate-800 dark:bg-slate-900 dark:text-slate-100 min-h-screen">
-  <div id="root" class="container mx-auto p-6"></div>
-  <div id="fallback" class="hidden text-center p-6 text-red-500">
-    Error: App failed to load. Check console for details or ensure JavaScript is enabled.
-  </div>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+  <!--
+  README — QUICK START
+  1) Run locally: open this HTML file directly in a browser (double-click) OR serve with: python3 -m http.server
+  2) Edit rates/config: inside APP_CONFIG (products, papers, machines, margins, add-ons, rounding policy).
+  3) Add a new product type:
+     - Add entry under APP_CONFIG.products with fields + default specs.
+     - Add calculator function in PricingEngine.productCalculators.
+     - Add field rendering rules in DynamicProductFields.
+  -->
+  <div id="root" class="max-w-7xl mx-auto p-4 md:p-6"></div>
 
   <script type="text/babel">
-/* ------------ ERROR BOUNDARY ------------- */
-class ErrorBoundary extends React.Component {
-  state = { hasError: false };
-  static getDerivedStateFromError() { return { hasError: true }; }
-  componentDidCatch(error, info) { console.error("ErrorBoundary caught:", error, info); }
-  render() {
-    if (this.state.hasError) {
-      return <div className="text-red-500 p-6 text-center">Something went wrong. Check console for details.</div>;
-    }
-    return this.props.children;
-  }
-}
-
-/* ------------ SAFE MOTION ------------- */
-const motion = window.framerMotion?.motion ?? { div: ({children,...p})=> <div {...p}>{children}</div> };
-
-/* ============ CONSTANTS ============ */
-const RATES = {
-  QTY_PRESETS_DEFAULT:[250,500,1000,3000,5000,10000,25000],
-  QTY_PRESETS_SHORT:[25,50,75,100,125,150,200,250],
-  PAPERS:[
-    {id:'18pt', label:'18 pt — $1.09/PS', cost:1.09},
-    {id:'10pt', label:'10 pt — $0.67/PS', cost:0.67},
-    {id:'80txt',label:'80# Text — $0.40/PS', cost:0.40},
-  ],
-  PRINT_TIERS:{
-    "1":[{min:1,max:499,price:0.85},{min:500,max:749,price:0.56},{min:750,max:999,price:0.46},{min:1000,max:2499,price:0.41},{min:2500,max:20000,price:0.32}],
-    "2":[{min:1,max:499,price:1.13},{min:500,max:749,price:0.83},{min:750,max:999,price:0.73},{min:1000,max:2499,price:0.68},{min:2500,max:20000,price:0.59}],
+const APP_CONFIG = {
+  currency: 'USD',
+  company: {
+    name: 'Hemp Press Packaging',
+    email: 'quotes@hemppresspackaging.com',
+    phone: '(541) 555-0190',
+    website: 'www.hemppresspackaging.com',
+    address: 'Eugene, OR'
   },
-  DIE_MACHINES:{
-    OG:{label:'OG Windmill – $0.04/impression (Setup: $60)', action:0.04, setup:60, stripping:0.01},
-    GT:{label:'GT Windmill – $0.04/impression (Setup: $60)', action:0.04, setup:60, stripping:0.01},
-    BRY:{label:'Barry – $0.12/impression (Setup: $60)', action:0.12, setup:60, stripping:0.03},
+  rounding: {
+    perPiecePrecision: 3,
+    totalPrecision: 2,
+    mode: 'ceil' // 'ceil' | 'nearest'
   },
-  GLUE_MACHINES:{
+  quantityPresets: [250, 500, 1000, 3000, 5000, 10000, 25000],
+  shortRunPresets: [25, 50, 75, 100, 125, 150, 200, 250],
+  printTiers: {
+    '1': [{min:1,max:499,price:0.85},{min:500,max:749,price:0.56},{min:750,max:999,price:0.46},{min:1000,max:2499,price:0.41},{min:2500,max:20000,price:0.32}],
+    '2': [{min:1,max:499,price:1.13},{min:500,max:749,price:0.83},{min:750,max:999,price:0.73},{min:1000,max:2499,price:0.68},{min:2500,max:20000,price:0.59}],
+  },
+  dieMachines: {
+    OG:{label:'OG Windmill', action:0.04, setup:60, stripping:0.01},
+    GT:{label:'GT Windmill', action:0.04, setup:60, stripping:0.01},
+    BRY:{label:'Barry', action:0.12, setup:60, stripping:0.03},
+  },
+  glueMachines: {
     HAND:{label:'Hand Glue', rates:{Fast:0.08,Slow:0.12,Complex:0.16}},
     MACHINE:{label:'Machine Glue', rates:{Standard:0.04,Complex:0.06}},
   },
-  LOWEST_PRINT:{'1':0.32,'2':0.59},
-  MARGINS:[0.50,0.40,0.30,0.25,0.15,0.60,0.65],
+  addOns: {
+    cornerRoundingA: { label: 'Corner Rounding (Model A)', setup: 20, perPiece: 0.01, mode: 'piece' },
+    cornerRoundingB: { label: 'Corner Rounding (Model B)', setup: 11, perTierQty: 250, perTierPrice: 11, mode: 'tier' },
+    uvSpot: { label: 'UV Spot (placeholder)', setup: 35, perPiece: 0.03, mode: 'piece' }
+  },
+  margins: [0.50,0.40,0.30,0.25,0.15],
+  products: {
+    packaging: {
+      label: 'Packaging',
+      stocks: [
+        { id: '18pt', label: '18 pt Hemp Field Board', cost: 1.09 },
+        { id: '10pt', label: '10 pt Hemp Terra Tag', cost: 0.67 },
+        { id: '80txt', label: '80# Text', cost: 0.40 }
+      ]
+    },
+    businessCards: {
+      label: 'Business Cards',
+      stocks: [
+        { id: '16pt-silk', label: '16pt Silk', cost: 0.12 },
+        { id: '14pt-uncoated', label: '14pt Uncoated', cost: 0.09 },
+        { id: '32pt-painted-edge', label: '32pt Painted Edge', cost: 0.32 }
+      ]
+    },
+    brochure: { label: 'Brochure', stocks: [{id:'100lb-gloss',label:'100lb Gloss (placeholder)',cost:0.18}] },
+    poster: { label: 'Poster', stocks: [{id:'100lb-cover',label:'100lb Cover (placeholder)',cost:0.45}] },
+    greetingCards: { label: 'Greeting Cards', stocks: [{id:'14pt-c1s',label:'14pt C1S (placeholder)',cost:0.21}] }
+  }
 };
 
-/* ========= UTILS ========= */
-const ceil = Math.ceil;
-
-// Always round UP to a fixed decimal precision (e.g. 3 decimals => 0.000)
-const ceilTo = (n, decimals = 3) => {
-  const f = Math.pow(10, decimals);
-  // tiny epsilon helps avoid floating artifacts like 1.23000000004 causing an extra cent
-  const eps = 1e-12;
-  return Math.ceil((n + eps) * f) / f;
+const UI = {
+  input: 'w-full rounded border border-slate-600 bg-slate-800 px-2 py-1 text-sm',
+  card: 'rounded-xl border border-slate-700 bg-slate-900 p-4 shadow'
 };
 
-// Keep for cases you still want classic 2-dec rounding (not used for pricing tables now)
-const roundTo = (n, decimals = 2) => {
-  const f = Math.pow(10, decimals);
-  return +(Math.round(n * f) / f).toFixed(decimals);
+const roundByPolicy = (value, precision, mode='ceil') => {
+  const factor = Math.pow(10, precision);
+  if (!Number.isFinite(value)) return 0;
+  if (mode === 'nearest') return Math.round(value * factor) / factor;
+  return Math.ceil((value + 1e-12) * factor) / factor;
 };
 
-const tierPrice = (ps, side) =>
-  RATES.PRINT_TIERS[side].find(t => ps >= t.min && ps <= t.max)?.price ?? RATES.PRINT_TIERS[side].at(-1).price;
+const applyPricingRounding = (perPieceRaw, qty, policy) => {
+  const priceEach = roundByPolicy(perPieceRaw, policy.perPiecePrecision, policy.mode);
+  const totalPrice = roundByPolicy(priceEach * qty, policy.totalPrecision, policy.mode);
+  return { priceEach, totalPrice };
+};
 
-/* ========== COST ENGINE ========== */
-function compute(params){
-  const overage = params.customOversQty !== '' && params.customOversQty >= 0 ? 0 : (params.overage || 10);
-  const customOversQty = params.customOversQty !== '' && params.customOversQty >= 0 ? +params.customOversQty : 0;
-  const effQty = customOversQty > 0 ? (params.qty + customOversQty) : (params.qty * (1 + overage / 100));
-  const effectiveOveragePercent = customOversQty > 0 ? (customOversQty / params.qty * 100) : overage;
+const toMoney = (n) => `$${n.toFixed(APP_CONFIG.rounding.totalPrecision)}`;
+const toUnit = (n) => `$${n.toFixed(APP_CONFIG.rounding.perPiecePrecision)}`;
+const formatDate = (value) => value || new Date().toISOString().slice(0,10);
 
-  const pressSheets = Math.max(5, ceil(effQty / params.OUT));
-  const paperCost = pressSheets * params.paper.cost;
+const tierPrice = (ps, side) => {
+  const tiers = APP_CONFIG.printTiers[String(side)] || [];
+  return tiers.find(t => ps >= t.min && ps <= t.max)?.price ?? (tiers[tiers.length - 1]?.price || 0);
+};
 
-  const printCostPS = params.includePrint ? (params.printOverride1Sided ?? tierPrice(pressSheets,'1')) : 0;
-  const printCostPS2 = params.includePrint ? (params.printOverride2Sided ?? tierPrice(pressSheets,'2')) : 0;
-  const print1 = pressSheets * printCostPS;
-  const print2 = pressSheets * printCostPS2;
+const calcAddOnCost = (addOnKey, qty, custom = {}) => {
+  const base = APP_CONFIG.addOns[addOnKey];
+  if (!base) return 0;
+  const setup = custom.setup ?? base.setup ?? 0;
+  if (base.mode === 'tier') {
+    const tierQty = custom.perTierQty ?? base.perTierQty ?? 1;
+    const tierPriceValue = custom.perTierPrice ?? base.perTierPrice ?? 0;
+    const tiersNeeded = Math.ceil(qty / Math.max(1, tierQty));
+    return setup + tiersNeeded * tierPriceValue;
+  }
+  const perPiece = custom.perPiece ?? base.perPiece ?? 0;
+  return setup + qty * perPiece;
+};
 
-  const dieM = RATES.DIE_MACHINES[params.die.machine];
-  const action = params.die.customAction ?? dieM.action;
-  const setup = params.die.customSetup ?? dieM.setup;
-  const stripPerPc = params.windows > 0 ? (dieM.stripping + params.windows * 0.015) : 0;
-  const actionPerPc = action / params.UP;
+const PricingEngine = {
+  productCalculators: {
+    packaging(input) {
+      const { qty, variantStock, specs, options } = input;
+      const overage = specs.customOverageQty > 0 ? 0 : specs.overagePercent;
+      const effectiveQty = specs.customOverageQty > 0 ? qty + specs.customOverageQty : qty * (1 + overage / 100);
+      const pressSheets = Math.max(5, Math.ceil(effectiveQty / Math.max(1, specs.out)));
+      const paperCost = pressSheets * variantStock.cost;
+      const printRate = specs.sides === '2' ? tierPrice(pressSheets, 2) : tierPrice(pressSheets, 1);
+      const printCost = options.includePrint ? pressSheets * printRate : 0;
 
-  const dieVar = params.includeDie ? effQty * (actionPerPc + stripPerPc) : 0;
-  const dieSetupCostPerPc = params.includeDie ? setup / effQty : 0;
-  const dieCost = dieVar + (params.includeDie ? setup : 0);
+      const dieMachine = APP_CONFIG.dieMachines[specs.dieMachine] || APP_CONFIG.dieMachines.OG;
+      const actionPerPiece = (specs.dieActionOverride > 0 ? specs.dieActionOverride : dieMachine.action) / Math.max(1, specs.up);
+      const setupCost = specs.dieSetupOverride > 0 ? specs.dieSetupOverride : dieMachine.setup;
+      const strippingPerPiece = (specs.windows > 0 ? dieMachine.stripping + specs.windows * 0.015 : 0);
+      const dieCost = options.includeDie ? setupCost + effectiveQty * (actionPerPiece + strippingPerPiece) : 0;
 
-  let glueCostMarkup = 0;
-  let glueCostEx = 0;
-  if (params.glue.include) {
-    if (params.glue.customRate && params.glue.customRate > 0) {
-      glueCostMarkup = params.glue.customRate * effQty;
-      glueCostEx = 0;
-    } else {
-      const glueRate = RATES.GLUE_MACHINES[params.glue.machine].rates[params.glue.mode];
-      const glueTotal = glueRate * effQty;
-      if (params.glue.machine === 'HAND' && params.glue.atCost) {
-        glueCostMarkup = Math.min(0.04 * effQty, glueTotal);
-        glueCostEx = glueTotal - glueCostMarkup;
-      } else {
-        glueCostMarkup = glueTotal;
+      let glueCost = 0;
+      if (options.includeGlue) {
+        const machine = APP_CONFIG.glueMachines[specs.glueMachine] || APP_CONFIG.glueMachines.HAND;
+        const glueRate = specs.glueRateOverride > 0 ? specs.glueRateOverride : (machine.rates[specs.glueMode] || 0);
+        glueCost = glueRate * effectiveQty;
       }
+
+      let prepressCost = options.includePrepress ? (specs.prepressOverrideCost > 0 ? specs.prepressOverrideCost : (50 + Math.max(0, specs.skus - 1) * 35)) : 0;
+      const handlingCost = options.includeHandling ? effectiveQty * (specs.handleOverride > 0 ? specs.handleOverride : (specs.out <= 5 ? 0.02 : 0)) : 0;
+
+      const addOnsCost = (options.selectedAddOns || []).reduce((sum, key) => sum + calcAddOnCost(key, qty, options.addOnOverrides?.[key]), 0);
+      const internalCost = paperCost + printCost + dieCost + glueCost + prepressCost + handlingCost + addOnsCost;
+
+      const margin = options.useMargin ? options.margin : 0;
+      const perPieceRaw = (internalCost / Math.max(1 - margin, 0.01)) / Math.max(qty, 1);
+      const rounded = applyPricingRounding(perPieceRaw, qty, APP_CONFIG.rounding);
+
+      return {
+        qty,
+        effectiveQty,
+        pressSheets,
+        priceEach: rounded.priceEach,
+        totalPrice: rounded.totalPrice,
+        internal: {
+          paperCost, printCost, dieCost, glueCost, prepressCost, handlingCost, addOnsCost, margin,
+          internalCost
+        }
+      };
+    },
+    businessCards(input) {
+      const { qty, variantStock, specs, options } = input;
+      const runQty = qty * (1 + (specs.overagePercent || 0) / 100);
+      const setupPrint = specs.sides === '2' ? 35 : 20;
+      const inkRate = specs.sides === '2' ? 0.045 : 0.03;
+      const baseMaterial = runQty * variantStock.cost;
+      const printCost = setupPrint + runQty * inkRate;
+      const cutCost = 15 + runQty * 0.008;
+      const finishCost = (options.selectedAddOns || []).reduce((sum, key) => sum + calcAddOnCost(key, qty, options.addOnOverrides?.[key]), 0);
+      const internalCost = baseMaterial + printCost + cutCost + finishCost;
+
+      const margin = options.useMargin ? options.margin : 0;
+      const perPieceRaw = (internalCost / Math.max(1 - margin, 0.01)) / Math.max(qty, 1);
+      const rounded = applyPricingRounding(perPieceRaw, qty, APP_CONFIG.rounding);
+      return {
+        qty,
+        effectiveQty: runQty,
+        pressSheets: Math.ceil(runQty / 24),
+        priceEach: rounded.priceEach,
+        totalPrice: rounded.totalPrice,
+        internal: { baseMaterial, printCost, cutCost, finishCost, margin, internalCost }
+      };
     }
+  },
+  computeMatrix({ productType, selectedStocks, quantities, specs, options }) {
+    const calculator = this.productCalculators[productType] || this.productCalculators.packaging;
+    return selectedStocks.map(stock => ({
+      variantKey: `${productType}::${stock.id}`,
+      stock,
+      rows: quantities.map(qty => calculator({ qty, variantStock: stock, specs, options }))
+    }));
   }
-
-  let preCost = 0;
-  if (params.includePrepress) {
-    if (params.prepressOverrideCost !== null) {
-      preCost = params.prepressOverrideCost;
-    } else {
-      preCost = 50 + Math.max(0, params.SKUs - 1) * 35;
-    }
-  }
-
-  const handlingRate = params.includeHandling ? (params.handleOverride !== '' ? +params.handleOverride : (params.OUT <= 5 ? 0.02 : 0)) : 0;
-  const handlingCost = handlingRate * effQty;
-
-  const margin = params.useMargin ? params.margin : 0;
-
-  let totalCustomCost = 0;
-  let customCostPerPieceTotal = 0;
-  if (params.includeCustomCost) {
-    customCostPerPieceTotal = params.customCostPerPiece * effQty;
-    const setupCost = params.customCostSetup;
-    totalCustomCost = customCostPerPieceTotal + setupCost;
-  }
-
-  function sideTotals(printCostSide) {
-    let markupBase = printCostSide + dieCost + glueCostMarkup + customCostPerPieceTotal;
-    let excluded = glueCostEx + preCost + handlingCost;
-
-    if (params.paperAtCost) {
-      excluded += paperCost;
-    } else if (params.splitPaperCost) {
-      const halfPaperCost = paperCost / 2;
-      markupBase += halfPaperCost;
-      excluded += halfPaperCost;
-    } else {
-      markupBase += paperCost;
-    }
-
-    // Raw sell price per piece
-    const sellPcRaw = (markupBase / (1 - margin) + excluded) / params.qty;
-
-    // REQUIRED: round UP to 3 decimals (0.000)
-    const sellPc = ceilTo(sellPcRaw, 3);
-
-    // Keep totals money-safe: round UP to cents
-    const sellTotal = ceilTo(sellPc * params.qty, 2);
-
-    const costBreak = {
-      paper: paperCost / params.qty,
-      print: printCostSide / params.qty,
-      die: dieSetupCostPerPc + (dieVar / params.qty),
-      strip: params.windows ? stripPerPc : 0,
-      glue: (glueCostMarkup + glueCostEx) / params.qty,
-      pre: preCost / params.qty,
-      handling: handlingCost / params.qty,
-      outside: (paperCost + printCostSide) / params.qty,
-      inside: (dieCost + glueCostMarkup + glueCostEx + preCost + handlingCost) / params.qty
-    };
-
-    if (params.includeCustomCost && totalCustomCost > 0) {
-      const keyForCustomCost = params.customCostName || 'Custom Cost';
-      costBreak[keyForCustomCost] = totalCustomCost / params.qty;
-    }
-
-    return { sellPc, sellTotal, costBreak, effectiveOveragePercent };
-  }
-
-  const one = sideTotals(print1);
-  const two = sideTotals(print2);
-
-  return {
-    pressSheets,
-    one,
-    two,
-    // Add-on should also respect the 0.000 round-up
-    addOn: ceilTo(two.sellPc - one.sellPc, 3)
-  };
-}
-
-/* ====== BEST-PRICE notched to 100 ====== */
-function bestBreaks(OUT, overage) {
-  const set = new Set();
-  ['1', '2'].forEach(s => {
-    RATES.PRINT_TIERS[s].slice(1).forEach(t => {
-      const pcs = ceil((t.min * OUT) / (1 + overage / 100) / 100) * 100;
-      set.add(pcs);
-    });
-  });
-  return [...set].sort((a, b) => a - b);
-}
-
-/* ===== Components ===== */
-const Label = ({ children }) => <label className="flex flex-col gap-1 text-sm">{children}</label>;
-const Num = props => <input type="number" className="border rounded px-2 py-1 w-full dark:bg-slate-700 dark:border-slate-600" {...props} />;
-
-const FinalCustomPricingTable = ({ finalCustomPricingOneSided, finalCustomPricingTwoSided, onTextChange }) => {
-  return (
-    <section className="bg-white dark:bg-slate-800 rounded-xl shadow mt-6">
-      <div className="bg-indigo-500 text-white rounded-t-xl p-2">
-        <h2 className="text-xl font-bold">Final Custom Pricing</h2>
-      </div>
-      <div className="p-3 grid md:grid-cols-2 gap-4">
-        <div>
-          <h3 className="text-lg font-semibold mb-1 text-center md:text-left">1-Sided Pricing</h3>
-          <textarea
-            value={finalCustomPricingOneSided}
-            onChange={(e) => onTextChange('oneSided', e.target.value)}
-            className="font-mono border rounded p-2 w-full dark:bg-slate-700 dark:border-slate-600 whitespace-pre"
-            rows="10"
-            placeholder="Qty ..... Price"
-          />
-        </div>
-        <div>
-          <h3 className="text-lg font-semibold mb-1 text-center md:text-left">2-Sided Pricing</h3>
-          <textarea
-            value={finalCustomPricingTwoSided}
-            onChange={(e) => onTextChange('twoSided', e.target.value)}
-            className="font-mono border rounded p-2 w-full dark:bg-slate-700 dark:border-slate-600 whitespace-pre"
-            rows="10"
-            placeholder="Qty ..... Price"
-          />
-        </div>
-      </div>
-    </section>
-  );
 };
 
-/* =========== APP =========== */
-function App() {
-  console.log('Rendering App component');
-  const STYLE_OPTIONS = [
-    'RTE (Reverse Tuck End)', 'STE (Straight Tuck End)', 'ATAB (Auto Tuck Auto Bottom)',
-    'TTAB (Top Tuck Auto Bottom)', 'AB (Auto Bottom)', 'SLB (Snap Lock Bottom)',
-    '1-2-3 Bottom (Snap Lock Bottom)', 'FSE (Full Seal End)', 'RET (Roll End Tuck)',
-    'RETT (Roll End Tuck Top)', 'RETF (Roll End Tuck Front)', 'WL (Walker Lock)',
-    'SLEEV (Sleeve)', 'SL+TR (Sleeve + Tray)', 'HSC (Half Slotted Carton)',
-    'Origami (Self Locking)', 'Custom'
-  ];
-  const MATERIAL_OPTIONS = [
-    '18pt Hemp Field Board',
-    '10pt Hemp Terra Tag',
-    'Custom'
-  ];
-  const PRINTING_OPTIONS = [
-    '4/0 Full Color 1 Sided Print',
-    '4/4 Full Color 2 Sided Print',
-    'Custom'
-  ];
-  const FREIGHT_FOB_OPTIONS = [
-    'Eugene, OR',
-    'Custom'
-  ];
-  const ADDITIONAL_CHARGE_OPTIONS = ['Cutting Die(s)', 'Embossing Die(s)', 'None'];
-  const DISCLAIMER_TEXT = "Please note: This quote is an estimate and subject to change based on final artwork, material availability, and other factors. All orders are subject to Hemp Press Packaging's standard terms and conditions.";
-  const ACCOUNT_MANAGER_OPTIONS = ['Matt Glyer', 'Myron Chadowitz', 'T’halia Martinez', 'Custom'];
-  const PREPARED_BY_OPTIONS = ['MG', 'MC', 'TM', 'Custom'];
+function downloadText(filename, content, mime = 'text/plain') {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
-  const [darkMode, setDarkMode] = React.useState(() => {
-    const savedTheme = localStorage.getItem('theme');
-    return savedTheme ? savedTheme === 'dark' : false;
+function App() {
+  const [darkMode, setDarkMode] = React.useState(true);
+  const [mode, setMode] = React.useState('quote'); // quote | catalog
+  const [showAdvanced, setShowAdvanced] = React.useState(false);
+  const [showInternal, setShowInternal] = React.useState(false);
+
+  const [meta, setMeta] = React.useState({
+    quoteId: `Q-${Date.now().toString().slice(-6)}`,
+    customerName: '',
+    projectName: '',
+    description: '',
+    quoteDate: formatDate(),
+    preparedBy: '',
+    notesInternal: ''
   });
-  const [isQuoteFormVisible, setIsQuoteFormVisible] = React.useState(false);
-  const [clientName, setClientName] = React.useState('');
-  const [quoteDate, setQuoteDate] = React.useState(new Date().toISOString().slice(0,10));
-  const [description, setDescription] = React.useState('CPIDXXXX');
-  const [size, setSize] = React.useState({ length: '', width: '', height: '' });
-  const [includesInsert, setIncludesInsert] = React.useState(false);
-  const [comments, setComments] = React.useState('');
-  const [selectedStyle, setSelectedStyle] = React.useState(STYLE_OPTIONS[0]);
-  const [customStyle, setCustomStyle] = React.useState('');
-  const [didNumber, setDidNumber] = React.useState('DIDXXX');
-  const [selectedMaterial, setSelectedMaterial] = React.useState(MATERIAL_OPTIONS[0]);
-  const [customMaterial, setCustomMaterial] = React.useState('');
-  const [selectedPrinting, setSelectedPrinting] = React.useState(PRINTING_OPTIONS[0]);
-  const [customPrinting, setCustomPrinting] = React.useState('');
-  const [selectedFreight, setSelectedFreight] = React.useState(FREIGHT_FOB_OPTIONS[0]);
-  const [customFreight, setCustomFreight] = React.useState('');
-  const [selectedAdditionalCharges, setSelectedAdditionalCharges] = React.useState([]);
-  const [customAdditionalChargeName, setCustomAdditionalChargeName] = React.useState('');
-  const [customAdditionalChargeValue, setCustomAdditionalChargeValue] = React.useState('');
-  const [showCustomAdditionalChargeInput, setShowCustomAdditionalChargeInput] = React.useState(false);
-  const [disclaimerEnabled, setDisclaimerEnabled] = React.useState(true);
-  const [selectedAccountManager, setSelectedAccountManager] = React.useState(ACCOUNT_MANAGER_OPTIONS[0]);
-  const [customAccountManager, setCustomAccountManager] = React.useState('');
-  const [selectedPreparedBy, setSelectedPreparedBy] = React.useState(PREPARED_BY_OPTIONS[0]);
-  const [customPreparedBy, setCustomPreparedBy] = React.useState('');
-  const [finalCustomPricingOneSided, setFinalCustomPricingOneSided] = React.useState("");
-  const [finalCustomPricingTwoSided, setFinalCustomPricingTwoSided] = React.useState("");
-  const [allTogglesOn, setAllTogglesOn] = React.useState(false);
-  const [areCustomCostingCardsCollapsed, setAreCustomCostingCardsCollapsed] = React.useState(false);
+
+  const [productType, setProductType] = React.useState('packaging');
+  const [presetType, setPresetType] = React.useState('default');
+  const [quantities, setQuantities] = React.useState(APP_CONFIG.quantityPresets);
+  const [customQty, setCustomQty] = React.useState('');
+
+  const [specs, setSpecs] = React.useState({
+    length: '', width: '', height: '',
+    sides: '1',
+    overagePercent: 10,
+    customOverageQty: 0,
+    up: 2,
+    out: 1,
+    dieMachine: 'OG',
+    dieActionOverride: 0,
+    dieSetupOverride: 0,
+    windows: 0,
+    glueMachine: 'HAND',
+    glueMode: 'Fast',
+    glueRateOverride: 0,
+    skus: 1,
+    prepressOverrideCost: 0,
+    handleOverride: 0,
+    cornerModel: 'cornerRoundingA',
+    cardSize: '3.5" x 2"',
+    paperWeight: 'Standard'
+  });
+
+  const [options, setOptions] = React.useState({
+    includePrint: true,
+    includeDie: true,
+    includeGlue: false,
+    includePrepress: true,
+    includeHandling: true,
+    useMargin: true,
+    margin: 0.4,
+    selectedAddOns: [],
+    addOnOverrides: {}
+  });
+
+  const [selectedStockIds, setSelectedStockIds] = React.useState([APP_CONFIG.products.packaging.stocks[0].id]);
+  const [selectedClientVariants, setSelectedClientVariants] = React.useState([]);
+  const [selectedRows, setSelectedRows] = React.useState({});
 
   React.useEffect(() => {
-    if (darkMode) {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('theme', 'dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('theme', 'light');
-    }
+    document.documentElement.classList.toggle('dark', darkMode);
   }, [darkMode]);
 
-  const [quantities, setQuantities] = React.useState(RATES.QTY_PRESETS_DEFAULT.map(q => ({ value: q, active: true, isDefault: true })));
-  const [selectedRange, setSelectedRange] = React.useState('default');
-  const [customQty, setCustomQty] = React.useState('');
-  const [overage, setOverage] = React.useState(10);
-  const [customOversQty, setCustomOversQty] = React.useState('');
-  const [showCustomOverage, setShowCustomOverage] = React.useState(false);
-  const [UP, setUP] = React.useState(2);
-  const [OUT, setOUT] = React.useState(1);
-  const [papers, setPapers] = React.useState([...RATES.PAPERS]);
-  const [paperIdx, setPaperIdx] = React.useState(0);
-  const [paperAtCost, setPaperAtCost] = React.useState(false);
-  const [splitPaperCost, setSplitPaperCost] = React.useState(true);
-  const [showCustomPaperFields, setShowCustomPaperFields] = React.useState(false);
-  const [customPaperName, setCustomPaperName] = React.useState('');
-  const [customPaperPrice, setCustomPaperPrice] = React.useState('');
-  const [includePrint, setIncludePrint] = React.useState(true);
-  const [showCustomPrintCost, setShowCustomPrintCost] = React.useState(false);
-  const [printOverride1Sided, setPrintOverride1Sided] = React.useState('');
-  const [printOverride2Sided, setPrintOverride2Sided] = React.useState('');
-  const [includeDie, setIncludeDie] = React.useState(true);
-  const [dieMachine, setDieMachine] = React.useState('OG');
-  const [windows, setWindows] = React.useState(0);
-  const [showCustomDieCost, setShowCustomDieCost] = React.useState(false);
-  const [showHasWindow, setShowHasWindow] = React.useState(false);
-  const [dieSetupOverride, setDieSetupOverride] = React.useState('');
-  const [dieActionOverride, setDieActionOverride] = React.useState('');
-  const [glueInclude, setGlueInclude] = React.useState(true);
-  const [glueMachine, setGlueMachine] = React.useState('HAND');
-  const [glueMode, setGlueMode] = React.useState('Fast');
-  const [glueAtCost, setGlueAtCost] = React.useState(true);
-  const [showCustomGlueRate, setShowCustomGlueRate] = React.useState(false);
-  const [customGlueRate, setCustomGlueRate] = React.useState('');
-  const [SKUs, setSKUs] = React.useState(1);
-  const [includePrepress, setIncludePrepress] = React.useState(true);
-  const [showCustomPrepress, setShowCustomPrepress] = React.useState(false);
-  const [prepressOverrideCost, setPrepressOverrideCost] = React.useState('');
-  const [useMargin, setUseMargin] = React.useState(true);
-  const [marginPreset, setMarginPreset] = React.useState('0.50');
-  const [marginCustom, setMarginCustom] = React.useState('');
-  const [includeHandling, setIncludeHandling] = React.useState(false);
-  const [handleOverride, setHandleOverride] = React.useState('');
-  const [includeCustomCost, setIncludeCustomCost] = React.useState(false);
-  const [customCostName, setCustomCostNameState] = React.useState('');
-  const [customCostValue, setCustomCostValueState] = React.useState('');
-  const [customCostSetup, setCustomCostSetup] = React.useState('');
-  const [showEarnings, setShowEarnings] = React.useState({});
-  const [showCosts, setShowCosts] = React.useState({});
-
-  // Auto-toggle handling based on OUT
   React.useEffect(() => {
-    setIncludeHandling(OUT <= 5);
-  }, [OUT]);
-  
-  const handleFinalCustomTextChange = (side, newText) => {
-    if (side === 'oneSided') {
-      setFinalCustomPricingOneSided(newText);
-    } else if (side === 'twoSided') {
-      setFinalCustomPricingTwoSided(newText);
+    const p = APP_CONFIG.products[productType];
+    setSelectedStockIds([p.stocks[0].id]);
+    setSelectedClientVariants([]);
+    setSelectedRows({});
+  }, [productType]);
+
+  React.useEffect(() => {
+    setQuantities(presetType === 'default' ? [...APP_CONFIG.quantityPresets] : [...APP_CONFIG.shortRunPresets]);
+  }, [presetType]);
+
+  const stocksForProduct = APP_CONFIG.products[productType].stocks;
+  const selectedStocks = stocksForProduct.filter(s => selectedStockIds.includes(s.id));
+
+  const validationWarnings = React.useMemo(() => {
+    const warnings = [];
+    if (!meta.customerName) warnings.push('Customer name is required for client-ready quote PDF.');
+    if (!meta.projectName) warnings.push('Project/product name is recommended.');
+    if (quantities.some(q => q <= 0)) warnings.push('Quantities must all be greater than zero.');
+    if (productType === 'packaging' && (Number(specs.up) <= 0 || Number(specs.out) <= 0)) warnings.push('UP and OUT must be greater than zero.');
+    if (!selectedStocks.length) warnings.push('Select at least one stock variant.');
+    return warnings;
+  }, [meta, quantities, specs, selectedStocks, productType]);
+
+  const matrix = React.useMemo(() => {
+    return PricingEngine.computeMatrix({ productType, selectedStocks, quantities, specs, options });
+  }, [productType, selectedStocks, quantities, specs, options]);
+
+  const toggleArray = (arr, value) => arr.includes(value) ? arr.filter(v => v !== value) : [...arr, value];
+  const setMetaField = (field, value) => setMeta(prev => ({ ...prev, [field]: value }));
+  const setSpecField = (field, value) => setSpecs(prev => ({ ...prev, [field]: value }));
+
+  const exportQuoteJSON = () => {
+    const payload = { meta, mode, productType, quantities, specs, options, selectedStockIds, selectedClientVariants, selectedRows, rounding: APP_CONFIG.rounding };
+    downloadText(`${meta.quoteId || 'quote'}.json`, JSON.stringify(payload, null, 2), 'application/json');
+  };
+
+  const handleQuoteLoad = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const data = JSON.parse(reader.result);
+        setMeta(data.meta || meta);
+        setMode(data.mode || 'quote');
+        setProductType(data.productType || 'packaging');
+        setQuantities(data.quantities || APP_CONFIG.quantityPresets);
+        setSpecs(data.specs || specs);
+        setOptions(data.options || options);
+        setSelectedStockIds(data.selectedStockIds || []);
+        setSelectedClientVariants(data.selectedClientVariants || []);
+        setSelectedRows(data.selectedRows || {});
+      } catch {
+        alert('Invalid quote JSON file.');
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const matrixRowsForExport = (clientOnly = false) => {
+    const allowedVariants = clientOnly && selectedClientVariants.length ? new Set(selectedClientVariants) : null;
+    const rows = [];
+    for (const variant of matrix) {
+      if (allowedVariants && !allowedVariants.has(variant.variantKey)) continue;
+      for (const row of variant.rows) {
+        const rowKey = `${variant.variantKey}::${row.qty}`;
+        if (clientOnly && selectedRows[variant.variantKey] && !selectedRows[variant.variantKey].includes(row.qty)) continue;
+        rows.push({
+          productType,
+          paperStock: variant.stock.label,
+          sides: specs.sides,
+          finishes: options.selectedAddOns.join('|') || 'None',
+          qty: row.qty,
+          priceEach: row.priceEach,
+          totalPrice: row.totalPrice,
+          currency: APP_CONFIG.currency,
+          notes: meta.description,
+          rowKey
+        });
+      }
     }
-  };  
-
-  const toggleEarnings = (qty) => {
-    setShowEarnings(prev => ({ ...prev, [qty]: !prev[qty] }));
+    return rows;
   };
 
-  const toggleCosts = (qty) => {
-    setShowCosts(prev => ({ ...prev, [qty]: !prev[qty] }));
+  const exportMatrixJSON = () => downloadText(`${meta.quoteId || 'quote'}-matrix.json`, JSON.stringify(matrixRowsForExport(mode === 'quote'), null, 2), 'application/json');
+
+  const exportMatrixCSV = () => {
+    const rows = matrixRowsForExport(mode === 'quote');
+    const headers = ['productType','paperStock','sides','finishes','qty','priceEach','totalPrice','currency','notes'];
+    const csv = [headers.join(',')].concat(rows.map(r => headers.map(h => `"${String(r[h] ?? '').replaceAll('"','""')}"`).join(','))).join('\n');
+    downloadText(`${meta.quoteId || 'quote'}-matrix.csv`, csv, 'text/csv');
   };
 
-  const toggleAll = () => {
-    const newState = !allTogglesOn;
-    setAllTogglesOn(newState);
-    const updatedEarnings = {};
-    const updatedCosts = {};
-    quantities.filter(qObj => qObj.active).forEach(qObj => {
-      updatedEarnings[qObj.value] = newState;
-      updatedCosts[qObj.value] = newState;
-    });
-    setShowEarnings(updatedEarnings);
-    setShowCosts(updatedCosts);
-  };
-
-  const handleAddCustomPaper = () => {
-    if (customPaperName && customPaperPrice) {
-      const newPaperCost = parseFloat(customPaperPrice);
-      if (isNaN(newPaperCost)) {
-        alert('Please enter a valid price for the custom paper.');
-        return;
-      }
-      const newPaper = {
-        id: customPaperName.toLowerCase().replace(/\s+/g, '-'),
-        label: `${customPaperName} — $${newPaperCost.toFixed(2)}/PS`,
-        cost: newPaperCost
-      };
-      setPapers(prevPapers => {
-        const updatedPapers = [...prevPapers, newPaper];
-        setPaperIdx(updatedPapers.length - 1);
-        return updatedPapers;
-      });
-      setCustomPaperName('');
-      setCustomPaperPrice('');
-    } else {
-      alert('Please enter both name and price for the custom paper.');
+  const copyClientMatrix = async () => {
+    const rows = matrixRowsForExport(true);
+    const text = rows.map(r => `${r.qty}\t${r.priceEach.toFixed(APP_CONFIG.rounding.perPiecePrecision)}\t${r.totalPrice.toFixed(APP_CONFIG.rounding.totalPrecision)}`).join('\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      alert('Selected client matrix copied.');
+    } catch {
+      alert('Clipboard unavailable in this browser context.');
     }
   };
 
-  const handleAdditionalChargeChange = (charge) => {
-    setSelectedAdditionalCharges(prev => {
-      const isNoneSelected = prev.includes('None');
-      const isCurrentChargeNone = charge === 'None';
+  const generateClientPDF = () => {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+    const rows = matrixRowsForExport(true);
+    if (!rows.length) return alert('Select at least one variant and one qty row for client PDF.');
 
-      if (isCurrentChargeNone) {
-        return prev.includes(charge) ? [] : ['None'];
-      } else {
-        let newCharges;
-        if (prev.includes(charge)) {
-          newCharges = prev.filter(c => c !== charge);
-        } else {
-          newCharges = [...prev.filter(c => c !== 'None'), charge];
-        }
-        return newCharges.length === 0 ? [] : newCharges;
-      }
+    doc.setFillColor(30,41,59);
+    doc.rect(0, 0, 595, 72, 'F');
+    doc.setTextColor(255,255,255);
+    doc.setFontSize(16);
+    doc.text(APP_CONFIG.company.name, 40, 40);
+    doc.setFontSize(10);
+    doc.text(`Quote ID: ${meta.quoteId}`, 420, 30);
+    doc.text(`Date: ${meta.quoteDate}`, 420, 46);
+
+    doc.setTextColor(15,23,42);
+    doc.setFontSize(12);
+    doc.text('Client Quote', 40, 98);
+    doc.setFontSize(10);
+    doc.text(`Customer: ${meta.customerName || '—'}`, 40, 118);
+    doc.text(`Project: ${meta.projectName || '—'}`, 40, 134);
+    doc.text(`Prepared by: ${meta.preparedBy || '—'}`, 40, 150);
+    doc.text(`Description: ${meta.description || '—'}`, 40, 166);
+
+    const specText = [
+      `Product Type: ${APP_CONFIG.products[productType].label}`,
+      `Size: ${productType === 'packaging' ? `${specs.length || '?'} x ${specs.width || '?'} x ${specs.height || '?'}` : specs.cardSize}`,
+      `Stock Variant(s): ${Array.from(new Set(rows.map(r => r.paperStock))).join(', ')}`,
+      `Printing: ${specs.sides === '2' ? '2-Sided' : '1-Sided'}`,
+      `Finishes: ${options.selectedAddOns.length ? options.selectedAddOns.map(k => APP_CONFIG.addOns[k]?.label || k).join(', ') : 'None'}`
+    ];
+    doc.text(specText, 40, 192);
+
+    doc.autoTable({
+      startY: 250,
+      head: [['Stock', 'Qty', 'Price / pc', 'Total']],
+      body: rows.map(r => [r.paperStock, String(r.qty), `$${r.priceEach.toFixed(APP_CONFIG.rounding.perPiecePrecision)}`, `$${r.totalPrice.toFixed(APP_CONFIG.rounding.totalPrecision)}`]),
+      theme: 'grid',
+      headStyles: { fillColor: [51,65,85] }
     });
+
+    const y = doc.lastAutoTable.finalY + 24;
+    doc.setFontSize(10);
+    doc.text('Lead Time: Estimated 7–12 business days after art approval.', 40, y);
+    doc.text('Disclaimer: Pricing is valid for 30 days and subject to material availability.', 40, y + 16);
+    doc.text(`Contact: ${APP_CONFIG.company.email} | ${APP_CONFIG.company.phone} | ${APP_CONFIG.company.website}`, 40, y + 32);
+    doc.save(`${meta.quoteId || 'client-quote'}.pdf`);
   };
 
-  const baseParams = q => ({
-    qty: q,
-    overage,
-    customOversQty,
-    UP: +UP || 1,
-    OUT: +OUT || 1,
-    paper: papers[paperIdx],
-    paperAtCost,
-    splitPaperCost,
-    includePrint,
-    printOverride1Sided: printOverride1Sided ? +printOverride1Sided : null,
-    printOverride2Sided: printOverride2Sided ? +printOverride2Sided : null,
-    includeDie,
-    die: {
-      machine: dieMachine,
-      customSetup: dieSetupOverride ? +dieSetupOverride : null,
-      customAction: dieActionOverride ? +dieActionOverride : null
-    },
-    windows: +windows || 0,
-    glue: {
-      include: glueInclude,
-      machine: glueMachine,
-      mode: glueMode,
-      atCost: glueAtCost,
-      customRate: customGlueRate ? +customGlueRate : null
-    },
-    SKUs: +SKUs || 1,
-    includePrepress: includePrepress,
-    prepressOverrideCost: prepressOverrideCost !== '' ? +prepressOverrideCost : null,
-    useMargin,
-    margin: (() => {
-      let effectiveMargin = 0;
-      if (marginCustom) {
-        effectiveMargin = +marginCustom / 100;
-      } else {
-        effectiveMargin = +marginPreset;
-      }
-      return Math.min(effectiveMargin, 0.99);
-    })(),
-    includeHandling,
-    handleOverride,
-    includeCustomCost: includeCustomCost,
-    customCostName: customCostName,
-    customCostPerPiece: customCostValue ? +customCostValue : 0,
-    customCostSetup: customCostSetup ? +customCostSetup : 0,
-  });
-
-  // Pricing tables: show 3 decimals, already rounded UP in compute()
-  const fmtLines = (side) => quantities
-    .filter(qObj => qObj.active)
-    .map(qObj => `${qObj.value.toLocaleString().padEnd(7,' ')} ........... $${compute(baseParams(qObj.value))[side].sellPc.toFixed(3)}`)
-    .join('\n');
-
-  const bestQs = bestBreaks(OUT, overage);
-  const bestLines = (side) => bestQs
-    .map(q => `${q.toLocaleString().padEnd(7,' ')} ........... $${compute(baseParams(q))[side].sellPc.toFixed(3)}`)
-    .join('\n');
-
-  const lowLines = (side) => quantities
-    .filter(qObj => qObj.active)
-    .map(qObj => {
-      const p = baseParams(qObj.value);
-      if (side === 'one') {
-        p.printOverride1Sided = RATES.LOWEST_PRINT['1'];
-        p.printOverride2Sided = 0;
-      } else {
-        p.printOverride1Sided = RATES.LOWEST_PRINT['1'];
-        p.printOverride2Sided = RATES.LOWEST_PRINT['2'];
-      }
-      return `${qObj.value.toLocaleString().padEnd(7,' ')} ........... $${compute(p)[side].sellPc.toFixed(3)}`;
-    }).join('\n');
+  const DynamicProductFields = () => {
+    if (productType === 'packaging') {
+      return (
+        <div className="grid md:grid-cols-4 gap-2">
+          <label className="text-sm">Length<input className={UI.input} value={specs.length} onChange={e=>setSpecField('length', e.target.value)} /></label>
+          <label className="text-sm">Width<input className={UI.input} value={specs.width} onChange={e=>setSpecField('width', e.target.value)} /></label>
+          <label className="text-sm">Height<input className={UI.input} value={specs.height} onChange={e=>setSpecField('height', e.target.value)} /></label>
+          <label className="text-sm">Windows<input type="number" className={UI.input} value={specs.windows} onChange={e=>setSpecField('windows', Number(e.target.value)||0)} /></label>
+        </div>
+      );
+    }
+    if (productType === 'businessCards') {
+      return (
+        <div className="grid md:grid-cols-3 gap-2">
+          <label className="text-sm">Card Size
+            <select className={UI.input} value={specs.cardSize} onChange={e=>setSpecField('cardSize', e.target.value)}>
+              <option>3.5" x 2"</option><option>Square 2.5" x 2.5"</option><option>Mini 3" x 1"</option>
+            </select>
+          </label>
+          <label className="text-sm">Paper Weight
+            <select className={UI.input} value={specs.paperWeight} onChange={e=>setSpecField('paperWeight', e.target.value)}>
+              <option>Standard</option><option>Premium</option><option>Luxury</option>
+            </select>
+          </label>
+          <label className="text-sm">Corner Rounding Model
+            <select className={UI.input} value={specs.cornerModel} onChange={e=>setSpecField('cornerModel', e.target.value)}>
+              <option value="cornerRoundingA">Model A ($20 + $0.01/pc)</option>
+              <option value="cornerRoundingB">Model B ($11 + $11/250)</option>
+            </select>
+          </label>
+        </div>
+      );
+    }
+    return <p className="text-sm text-slate-400">Placeholder form for {APP_CONFIG.products[productType].label}. Add calculator when ready.</p>;
+  };
 
   return (
-    <ErrorBoundary>
-      <div className="flex justify-end mb-4 gap-2">
-        <button
-          type="button"
-          onClick={() => { setIsQuoteFormVisible(!isQuoteFormVisible); setAreCustomCostingCardsCollapsed(!areCustomCostingCardsCollapsed); }}
-          className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600 dark:bg-blue-600 dark:hover:bg-blue-700"
-        >
-          Prepare Client Quote
-        </button>
-        <button
-          onClick={() => setDarkMode(prev => !prev)}
-          className="px-4 py-2 bg-indigo-500 text-white rounded hover:bg-indigo-600 dark:bg-indigo-600 dark:hover:bg-indigo-700 flex items-center gap-2"
-        >
-          {darkMode ? (
-            <>
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
-              </svg>
-              Light Mode
-            </>
-          ) : (
-            <>
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
-              </svg>
-              Dark Mode
-            </>
-          )}
-        </button>
-        <button
-          onClick={toggleAll}
-          className="px-4 py-2 bg-indigo-500 text-white rounded hover:bg-indigo-600 dark:bg-indigo-600 dark:hover:bg-indigo-700"
-        >
-          {allTogglesOn ? 'Hide Profit & Costs' : 'Show Profit & Costs'}
-        </button>
-      </div>
-
-      <div className="grid md:grid-cols-2 gap-8">
-        <div className="space-y-6">
-          <h1 className="text-2xl font-bold">Custom Costing</h1>
-
-          <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
-            <div className="bg-indigo-500 text-white rounded-t-xl p-2">
-              <h2 className="text-xl font-bold">Select Order Quantities</h2>
-              <p className="text-xs">Click quantity boxes to toggle them on or off</p>
-            </div>
-            {!areCustomCostingCardsCollapsed && (
-            <div className="p-3 space-y-3">
-              <div className="flex flex-wrap gap-2">
-                <button
-                  className={`px-3 py-1 rounded ${selectedRange === 'default' ? 'bg-indigo-500 text-white hover:bg-indigo-600 dark:hover:bg-indigo-500' : 'bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600'}`}
-                  onClick={() => {
-                    setQuantities(RATES.QTY_PRESETS_DEFAULT.map(q => ({ value: q, active: true, isDefault: true })));
-                    setSelectedRange('default');
-                  }}
-                >
-                  Default (250-25k)
-                </button>
-                <button
-                  className={`px-3 py-1 rounded ${selectedRange === 'short' ? 'bg-indigo-500 text-white hover:bg-indigo-600 dark:hover:bg-indigo-500' : 'bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600'}`}
-                  onClick={() => {
-                    setQuantities(RATES.QTY_PRESETS_SHORT.map(q => ({ value: q, active: true, isDefault: true })));
-                    setSelectedRange('short');
-                  }}
-                >
-                  Short Run (25-250)
-                </button>
-              </div>
-              {selectedRange && (
-                <div className="flex flex-wrap gap-2">
-                  {quantities.sort((a, b) => a.value - b.value).map(qObj => (
-                    <button
-                      key={qObj.value}
-                      className={`px-3 py-1 rounded hover:bg-slate-300 dark:hover:bg-slate-600 ${qObj.active ? 'bg-indigo-500 text-white hover:bg-indigo-600 dark:hover:bg-indigo-500' : 'bg-slate-200 dark:bg-slate-700'}`}
-                      onClick={() => setQuantities(prevQuantities =>
-                        prevQuantities.map(item =>
-                          item.value === qObj.value ? { ...item, active: !item.active } : item
-                        )
-                      )}
-                    >
-                      {qObj.value.toLocaleString()}
-                    </button>
-                  ))}
-                </div>
-              )}
-              <div className="flex gap-2">
-                <Num value={customQty} onChange={e => setCustomQty(e.target.value)} placeholder="Enter custom qty"/>
-                <button
-                  className="px-3 py-1 bg-indigo-500 text-white rounded hover:bg-indigo-600 dark:hover:bg-indigo-500"
-                  onClick={() => {
-                    if (customQty) {
-                      const numQty = +customQty;
-                      setQuantities(prevQs => {
-                        const existingQty = prevQs.find(q => q.value === numQty);
-                        if (existingQty) {
-                          return prevQs.map(q => q.value === numQty ? { ...q, active: true } : q);
-                        } else {
-                          return [...prevQs, { value: numQty, active: true, isDefault: false }].sort((a, b) => a.value - b.value);
-                        }
-                      });
-                      setCustomQty('');
-                    }
-                  }}
-                >
-                  Add
-                </button>
-              </div>
-            </div>
-            )}
-          </section>
-
-          <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
-            <div className="bg-indigo-500 text-white rounded-t-xl p-2">
-              <h2 className="text-xl font-bold">Overage</h2>
-              <p className="text-xs">Enter custom overs quantity</p>
-              <div className="flex gap-2 mt-1">
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={showCustomOverage} onChange={e => setShowCustomOverage(e.target.checked)} />
-                  Custom Cost
-                </label>
-              </div>
-            </div>
-            {!areCustomCostingCardsCollapsed && (
-            <div className="p-3 space-y-3">
-              <div className="flex flex-wrap gap-2">
-                {[15, 10, 5].map(ov => (
-                  <button
-                    key={ov}
-                    className={`px-3 py-1 rounded ${overage === ov && customOversQty === '' ? 'bg-indigo-500 text-white hover:bg-indigo-600 dark:hover:bg-indigo-500' : 'bg-slate-200 dark:bg-slate-700 hover:bg-slate-300 dark:hover:bg-slate-600'}`}
-                    onClick={() => {
-                      setOverage(ov);
-                      setCustomOversQty('');
-                    }}
-                  >
-                    {ov}%
-                  </button>
-                ))}
-              </div>
-              {showCustomOverage && (
-                <div className="flex gap-2">
-                  <Num
-                    value={customOversQty}
-                    onChange={e => setCustomOversQty(e.target.value)}
-                    placeholder="Enter custom qty (pcs not %)"
-                    min="0"
-                  />
-                </div>
-              )}
-            </div>
-            )}
-          </section>
-
-          <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
-            <div className="bg-indigo-500 text-white rounded-t-xl p-2">
-              <h2 className="text-xl font-bold">Piece Layout</h2>
-            </div>
-            {!areCustomCostingCardsCollapsed && (
-            <div className="p-3">
-              <div className="grid grid-cols-2 gap-4">
-                <Label>UP (Units per Cut Sheet)<Num value={UP} onChange={e => setUP(e.target.value)} /></Label>
-                <Label>OUT (Units Per Press Sheet)<Num value={OUT} onChange={e => setOUT(e.target.value)} /></Label>
-              </div>
-            </div>
-            )}
-          </section>
-
-          <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
-            <div className="bg-indigo-500 text-white rounded-t-xl p-2">
-              <h2 className="text-xl font-bold">Paper</h2>
-              <div className="flex gap-2 mt-1">
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={splitPaperCost} onChange={e => setSplitPaperCost(e.target.checked)} />
-                  Split paper cost (50% markup, 50% at cost)
-                </label>
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={paperAtCost} onChange={e => setPaperAtCost(e.target.checked)} />
-                  Add paper at cost (exclude markup)
-                </label>
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={showCustomPaperFields} onChange={e => setShowCustomPaperFields(e.target.checked)} />
-                  Add Custom Paper
-                </label>
-              </div>
-            </div>
-            {!areCustomCostingCardsCollapsed && (
-            <div className="p-3 space-y-2">
-              <select className="w-full border rounded px-2 py-1 dark:bg-slate-700 dark:border-slate-600" value={paperIdx} onChange={e => setPaperIdx(+e.target.value)}>
-                {papers.map((p, i) => <option key={p.id} value={i}>{p.label}</option>)}
-              </select>
-              {showCustomPaperFields && (
-                <div className="mt-4 space-y-2">
-                  <Label>Paper Name
-                    <input type="text" value={customPaperName} onChange={e => setCustomPaperName(e.target.value)} className="border rounded px-2 py-1 w-full dark:bg-slate-700 dark:border-slate-600" />
-                  </Label>
-                  <Label>Price per Press Sheet
-                    <Num value={customPaperPrice} onChange={e => setCustomPaperPrice(e.target.value)} />
-                  </Label>
-                  <button
-                    onClick={handleAddCustomPaper}
-                    className="px-3 py-1 bg-indigo-500 text-white rounded hover:bg-indigo-600 dark:hover:bg-indigo-500 text-sm"
-                  >
-                    Add Custom Paper
-                  </button>
-                </div>
-              )}
-            </div>
-            )}
-          </section>
-
-          <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
-            <div className="bg-indigo-500 text-white rounded-t-xl p-2">
-              <h2 className="text-xl font-bold">Printing</h2>
-              <div className="flex gap-2 mt-1">
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={includePrint} onChange={e => setIncludePrint(e.target.checked)} />
-                  Include printing
-                </label>
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={showCustomPrintCost} onChange={e => setShowCustomPrintCost(e.target.checked)} />
-                  Custom Printing Cost
-                </label>
-              </div>
-            </div>
-            {!areCustomCostingCardsCollapsed && (
-            <div className="p-3 space-y-2">
-              {includePrint && showCustomPrintCost && (
-                <>
-                  <Label>Override cost / Press-Sheet – 1 Sided <Num value={printOverride1Sided} onChange={e => setPrintOverride1Sided(e.target.value)} /></Label>
-                  <Label>Override cost / Press-Sheet – 2 Sided <Num value={printOverride2Sided} onChange={e => setPrintOverride2Sided(e.target.value)} /></Label>
-                </>
-              )}
-            </div>
-            )}
-          </section>
-
-          <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
-            <div className="bg-indigo-500 text-white rounded-t-xl p-2">
-              <h2 className="text-xl font-bold">Die-Cutting</h2>
-              <div className="flex gap-2 mt-1">
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={includeDie} onChange={e => setIncludeDie(e.target.checked)} />
-                  Include die-cutting
-                </label>
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={showCustomDieCost} onChange={e => setShowCustomDieCost(e.target.checked)} />
-                  Custom Cost
-                </label>
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={showHasWindow} onChange={e => setShowHasWindow(e.target.checked)} />
-                  Has Window
-                </label>
-              </div>
-            </div>
-            {!areCustomCostingCardsCollapsed && (
-            <div className="p-3 space-y-2">
-              {includeDie && (
-                <>
-                  <Label>Select Machine
-                    <select className="border rounded px-2 py-1 dark:bg-slate-700 dark:border-slate-600" value={dieMachine} onChange={e => setDieMachine(e.target.value)}>
-                      {Object.entries(RATES.DIE_MACHINES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-                    </select>
-                  </Label>
-                  {showCustomDieCost && (
-                    <>
-                      <Label>Custom setup $/job<Num value={dieSetupOverride} onChange={e => setDieSetupOverride(e.target.value)} /></Label>
-                      <Label>Custom action $/impression<Num value={dieActionOverride} onChange={e => setDieActionOverride(e.target.value)} /></Label>
-                    </>
-                  )}
-                  {showHasWindow && (
-                    <Label>Windows / piece<Num value={windows} min={0} onChange={e => setWindows(e.target.value)} /></Label>
-                  )}
-                </>
-              )}
-            </div>
-            )}
-          </section>
-
-          <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
-            <div className="bg-indigo-500 text-white rounded-t-xl p-2">
-              <h2 className="text-xl font-bold">Glue</h2>
-              <div className="flex gap-2 mt-1">
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={glueInclude} onChange={e => setGlueInclude(e.target.checked)} />
-                  Include glue
-                </label>
-                {glueMachine === 'HAND' && (
-                  <label className="inline-flex items-center gap-2 text-sm">
-                    <input type="checkbox" checked={glueAtCost} onChange={e => setGlueAtCost(e.target.checked)} />
-                    Add glue at cost (first $0.04 in markup)
-                  </label>
-                )}
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={showCustomGlueRate} onChange={e => setShowCustomGlueRate(e.target.checked)} />
-                  Custom
-                </label>
-              </div>
-            </div>
-            {!areCustomCostingCardsCollapsed && (
-            <div className="p-3 space-y-2">
-              {glueInclude && (
-                <>
-                  <Label>Machine
-                    <select className="border rounded px-2 py-1 dark:bg-slate-700 dark:border-slate-600" value={glueMachine} onChange={e => { setGlueMachine(e.target.value); setGlueMode(Object.keys(RATES.GLUE_MACHINES[e.target.value].rates)[0]) }}>
-                      {Object.entries(RATES.GLUE_MACHINES).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
-                    </select>
-                  </Label>
-                  <Label>Mode / rate
-                    <select className="border rounded px-2 py-1 dark:bg-slate-700 dark:border-slate-600" value={glueMode} onChange={e => setGlueMode(e.target.value)}>
-                      {Object.entries(RATES.GLUE_MACHINES[glueMachine].rates).map(([m, r]) => <option key={m} value={m}>{m} – ${r.toFixed(2)}/pc</option>)}
-                    </select>
-                  </Label>
-                  {showCustomGlueRate && (
-                    <Label>Custom Glue $/pc
-                      <Num value={customGlueRate} onChange={e => setCustomGlueRate(e.target.value)} placeholder="e.g., 0.10" />
-                    </Label>
-                  )}
-                </>
-              )}
-            </div>
-            )}
-          </section>
-
-          <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
-            <div className="bg-indigo-500 text-white rounded-t-xl p-2">
-              <h2 className="text-xl font-bold">Handling</h2>
-              <div className="flex gap-2 mt-1">
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={includeHandling} onChange={e => setIncludeHandling(e.target.checked)} />
-                  Include handling
-                </label>
-              </div>
-            </div>
-            {!areCustomCostingCardsCollapsed && (
-            <div className="p-3 space-y-2">
-              {includeHandling && <Label>Cost / piece<Num value={handleOverride} onChange={e => setHandleOverride(e.target.value)} /></Label>}
-              <p className="text-xs text-slate-500 dark:text-slate-400">Default $0.02 / pc when OUT ≤ 5</p>
-            </div>
-            )}
-          </section>
-
-          <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
-            <div className="bg-indigo-500 text-white rounded-t-xl p-2">
-              <h2 className="text-xl font-bold">Custom Cost</h2>
-              <div className="flex gap-2 mt-1">
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={includeCustomCost} onChange={e => setIncludeCustomCost(e.target.checked)} />
-                  Enable Custom Cost
-                </label>
-              </div>
-            </div>
-            {!areCustomCostingCardsCollapsed && (
-            <div className="p-3 space-y-2">
-              {includeCustomCost && (
-                <div className="space-y-2 pt-2">
-                  <Label>Custom Name
-                    <input
-                      type="text"
-                      value={customCostName}
-                      onChange={e => setCustomCostNameState(e.target.value)}
-                      placeholder="e.g., Packing Fee"
-                      className="border rounded px-2 py-1 w-full dark:bg-slate-700 dark:border-slate-600"
-                    />
-                  </Label>
-                  <Label>Custom Cost / pc
-                    <Num value={customCostValue} onChange={e => setCustomCostValueState(e.target.value)} />
-                  </Label>
-                  <Label>Custom Cost Setup / Order
-                    <Num value={customCostSetup} onChange={e => setCustomCostSetup(e.target.value)} placeholder="e.g., 50" />
-                  </Label>
-                </div>
-              )}
-            </div>
-            )}
-          </section>
-
-          <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
-            <div className="bg-indigo-500 text-white rounded-t-xl p-2">
-              <h2 className="text-xl font-bold">Pre-press / Proofing</h2>
-              <div className="flex gap-2 mt-1">
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={includePrepress} onChange={e => setIncludePrepress(e.target.checked)} />
-                  Include Pre-press / Proofing
-                </label>
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={showCustomPrepress} onChange={e => setShowCustomPrepress(e.target.checked)} />
-                  Custom
-                </label>
-              </div>
-            </div>
-            {!areCustomCostingCardsCollapsed && (
-            <div className="p-3 space-y-2">
-              {includePrepress && showCustomPrepress && (
-                <>
-                  <Label>Override Pre-press Cost ($)
-                    <Num value={prepressOverrideCost} onChange={e => setPrepressOverrideCost(e.target.value)} placeholder="e.g., 100" />
-                  </Label>
-                  <Label># of SKUs (used if override is not set)
-                    <Num value={SKUs} min={1} onChange={e => setSKUs(e.target.value)} />
-                  </Label>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Original logic: Base $60 + $35 per extra SKU. If override is set, SKU count is ignored for pre-press cost.</p>
-                </>
-              )}
-            </div>
-            )}
-          </section>
-
-          <section className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow">
-            <div className="bg-indigo-500 text-white rounded-t-xl p-2">
-              <h2 className="text-xl font-bold">Margin</h2>
-              <div className="flex gap-2 mt-1">
-                <label className="inline-flex items-center gap-2 text-sm">
-                  <input type="checkbox" checked={useMargin} onChange={e => setUseMargin(e.target.checked)} />
-                  Include margin
-                </label>
-              </div>
-            </div>
-            {!areCustomCostingCardsCollapsed && (
-            <div className="p-3 space-y-2">
-              {useMargin && (
-                <>
-                  <select className="w-full border rounded px-2 py-1 dark:bg-slate-700 dark:border-slate-600" value={marginPreset} onChange={e => setMarginPreset(e.target.value)}>
-                    {RATES.MARGINS.map(m => <option key={m} value={m}>{(m * 100).toFixed(0)}%</option>)}
-                  </select>
-                  <Label>Custom %<Num value={marginCustom} onChange={e => setMarginCustom(e.target.value)} /></Label>
-                </>
-              )}
-            </div>
-            )}
-          </section>
-
-          {/* MODIFIED_QUOTE_FORM_RENDERING_LOGIC */}
-          {console.log('Quote form props:', { isQuoteFormVisible, areCustomCostingCardsCollapsed })}
-          {isQuoteFormVisible && (
-            <div id="quoteFormContainer" className="mt-4 p-4 border border-gray-300 rounded transition-all duration-500 ease-in-out max-h-screen opacity-100 overflow-y-auto">
-              {!areCustomCostingCardsCollapsed && (
-                <>
-                  {/* Client Name */}
-                  <div className="mb-4">
-                    <label htmlFor="clientName" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Client Name</label>
-                    <input type="text" id="clientName" name="clientName" value={clientName} onChange={(e) => setClientName(e.target.value)} required className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100" />
-                  </div>
-
-                  {/* Quote Date */}
-                  <div className="mb-4">
-                    <label htmlFor="quoteDate" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Quote Date</label>
-                    <input type="date" id="quoteDate" name="quoteDate" value={quoteDate} onChange={(e) => setQuoteDate(e.target.value)} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100" />
-                  </div>
-
-                  {/* Description */}
-                  <div className="mb-4">
-                    <label htmlFor="description" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Description</label>
-                    <input type="text" id="description" name="description" value={description} onChange={(e) => setDescription(e.target.value)} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100" />
-                  </div>
-
-                  {/* Size Group */}
-                  <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Size</label>
-                    <div className="mt-1 grid grid-cols-3 gap-4">
-                      <div>
-                        <label htmlFor="sizeLength" className="block text-xs font-medium text-gray-500 dark:text-gray-400">Length</label>
-                        <input type="number" id="sizeLength" name="sizeLength" value={size.length} onChange={(e) => setSize(prev => ({ ...prev, length: e.target.value }))} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100" />
-                      </div>
-                      <div>
-                        <label htmlFor="sizeWidth" className="block text-xs font-medium text-gray-500 dark:text-gray-400">Width</label>
-                        <input type="number" id="sizeWidth" name="sizeWidth" value={size.width} onChange={(e) => setSize(prev => ({ ...prev, width: e.target.value }))} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100" />
-                      </div>
-                      <div>
-                        <label htmlFor="sizeHeight" className="block text-xs font-medium text-gray-500 dark:text-gray-400">Height</label>
-                        <input type="number" id="sizeHeight" name="sizeHeight" value={size.height} onChange={(e) => setSize(prev => ({ ...prev, height: e.target.value }))} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100" />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Includes Insert */}
-                  <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Includes Insert</label>
-                    <div className="mt-2 flex items-center space-x-4">
-                      <div className="flex items-center">
-                        <input type="radio" id="includesInsertYes" name="includesInsert" value="true" checked={includesInsert === true} onChange={() => setIncludesInsert(true)} className="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:focus:ring-indigo-600" />
-                        <label htmlFor="includesInsertYes" className="ml-2 block text-sm text-gray-900 dark:text-gray-300">Yes</label>
-                      </div>
-                      <div className="flex items-center">
-                        <input type="radio" id="includesInsertNo" name="includesInsert" value="false" checked={includesInsert === false} onChange={() => setIncludesInsert(false)} className="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:focus:ring-indigo-600" />
-                        <label htmlFor="includesInsertNo" className="ml-2 block text-sm text-gray-900 dark:text-gray-300">No</label>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Comments */}
-                  <div className="mb-4">
-                    <label htmlFor="comments" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Comments</label>
-                    <textarea id="comments" name="comments" rows="3" value={comments} onChange={(e) => setComments(e.target.value)} className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"></textarea>
-                  </div>
-
-                  {/* Style Dropdown */}
-                  <div className="mb-4">
-                    <label htmlFor="selectedStyle" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Style</label>
-                    <select
-                      id="selectedStyle"
-                      name="selectedStyle"
-                      value={selectedStyle}
-                      onChange={(e) => setSelectedStyle(e.target.value)}
-                      className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
-                    >
-                      {STYLE_OPTIONS.map(option => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Custom Style Input (Conditional) */}
-                  {selectedStyle === 'Custom' && (
-                    <div className="mb-4">
-                      <label htmlFor="customStyle" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Custom Style Name</label>
-                      <input
-                        type="text"
-                        id="customStyle"
-                        name="customStyle"
-                        value={customStyle}
-                        onChange={(e) => setCustomStyle(e.target.value)}
-                        placeholder="Enter custom style"
-                        className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
-                      />
-                    </div>
-                  )}
-
-                  {/* DID# Input */}
-                  <div className="mb-4">
-                    <label htmlFor="didNumber" className="block text-sm font-medium text-gray-700 dark:text-gray-300">DID#</label>
-                    <input
-                      type="text"
-                      id="didNumber"
-                      name="didNumber"
-                      value={didNumber}
-                      onChange={(e) => setDidNumber(e.target.value)}
-                      className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
-                    />
-                  </div>
-
-                  {/* Material Dropdown */}
-                  <div className="mb-4">
-                    <label htmlFor="selectedMaterial" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Material</label>
-                    <select
-                      id="selectedMaterial"
-                      name="selectedMaterial"
-                      value={selectedMaterial}
-                      onChange={(e) => setSelectedMaterial(e.target.value)}
-                      className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
-                    >
-                      {MATERIAL_OPTIONS.map(option => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Custom Material Input (Conditional) */}
-                  {selectedMaterial === 'Custom' && (
-                    <div className="mb-4">
-                      <label htmlFor="customMaterial" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Custom Material Name</label>
-                      <input
-                        type="text"
-                        id="customMaterial"
-                        name="customMaterial"
-                        value={customMaterial}
-                        onChange={(e) => setCustomMaterial(e.target.value)}
-                        placeholder="Enter custom material"
-                        className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
-                      />
-                    </div>
-                  )}
-
-                  {/* Printing Dropdown */}
-                  <div className="mb-4">
-                    <label htmlFor="selectedPrinting" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Printing</label>
-                    <select
-                      id="selectedPrinting"
-                      name="selectedPrinting"
-                      value={selectedPrinting}
-                      onChange={(e) => setSelectedPrinting(e.target.value)}
-                      className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
-                    >
-                      {PRINTING_OPTIONS.map(option => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Custom Printing Input (Conditional) */}
-                  {selectedPrinting === 'Custom' && (
-                    <div className="mb-4">
-                      <label htmlFor="customPrinting" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Custom Printing</label>
-                      <input
-                        type="text"
-                        id="customPrinting"
-                        name="customPrinting"
-                        value={customPrinting}
-                        onChange={(e) => setCustomPrinting(e.target.value)}
-                        placeholder="Enter custom printing details"
-                        className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
-                      />
-                    </div>
-                  )}
-
-                  {/* Freight FOB Dropdown */}
-                  <div className="mb-4">
-                    <label htmlFor="selectedFreight" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Freight FOB</label>
-                    <select
-                      id="selectedFreight"
-                      name="selectedFreight"
-                      value={selectedFreight}
-                      onChange={(e) => setSelectedFreight(e.target.value)}
-                      className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
-                    >
-                      {FREIGHT_FOB_OPTIONS.map(option => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Custom Freight FOB Input (Conditional) */}
-                  {selectedFreight === 'Custom' && (
-                    <div className="mb-4">
-                      <label htmlFor="customFreight" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Custom Freight FOB</label>
-                      <input
-                        type="text"
-                        id="customFreight"
-                        name="customFreight"
-                        value={customFreight}
-                        onChange={(e) => setCustomFreight(e.target.value)}
-                        placeholder="Enter custom freight FOB"
-                        className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
-                      />
-                    </div>
-                  )}
-
-                  {/* Additional Charges Section */}
-                  <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Additional Charges</label>
-                    <div className="mt-2 space-y-2">
-                      {ADDITIONAL_CHARGE_OPTIONS.map(charge => (
-                        <div key={charge} className="flex items-center">
-                          <input
-                            type="checkbox"
-                            id={`charge-${charge}`}
-                            name={charge}
-                            checked={selectedAdditionalCharges.includes(charge)}
-                            onChange={() => handleAdditionalChargeChange(charge)}
-                            className="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:focus:ring-indigo-600 rounded"
-                          />
-                          <label htmlFor={`charge-${charge}`} className="ml-2 block text-sm text-gray-900 dark:text-gray-300">
-                            {charge}
-                          </label>
-                        </div>
-                      ))}
-                      <button
-                        type="button"
-                        onClick={() => setShowCustomAdditionalChargeInput(prev => !prev)}
-                        className="mt-2 px-3 py-1 text-sm bg-indigo-500 text-white rounded hover:bg-indigo-600 dark:hover:bg-indigo-500"
-                      >
-                        {showCustomAdditionalChargeInput ? 'Cancel Custom Charge' : 'Add Custom Charge'}
-                      </button>
-                      {showCustomAdditionalChargeInput && (
-                        <div className="mt-2 space-y-2 p-3 border border-gray-300 dark:border-gray-600 rounded-md">
-                          <div>
-                            <label htmlFor="customAdditionalChargeName" className="block text-xs font-medium text-gray-500 dark:text-gray-400">Custom Charge Name</label>
-                            <input
-                              type="text"
-                              id="customAdditionalChargeName"
-                              value={customAdditionalChargeName}
-                              onChange={(e) => setCustomAdditionalChargeName(e.target.value)}
-                              placeholder="Enter charge name"
-                              className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
-                            />
-                          </div>
-                          <div>
-                            <label htmlFor="customAdditionalChargeValue" className="block text-xs font-medium text-gray-500 dark:text-gray-400">Custom Charge Value ($)</label>
-                            <input
-                              type="number"
-                              id="customAdditionalChargeValue"
-                              value={customAdditionalChargeValue}
-                              onChange={(e) => setCustomAdditionalChargeValue(e.target.value)}
-                              placeholder="Enter charge value"
-                              className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
-                            />
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Disclaimer Section */}
-                  <div className="mb-4">
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Include Disclaimer</label>
-                    <div className="mt-2 flex items-center">
-                      <input
-                        type="checkbox"
-                        id="disclaimerEnabled"
-                        checked={disclaimerEnabled}
-                        onChange={() => setDisclaimerEnabled(prev => !prev)}
-                        className="focus:ring-indigo-500 h-4 w-4 text-indigo-600 border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:focus:ring-indigo-600 rounded"
-                      />
-                      <label htmlFor="disclaimerEnabled" className="ml-2 block text-sm text-gray-900 dark:text-gray-300">
-                        Yes, include the disclaimer on the quote.
-                      </label>
-                    </div>
-                    {disclaimerEnabled && (
-                      <div className="mt-2 p-3 border border-gray-300 dark:border-gray-600 rounded-md bg-slate-50 dark:bg-slate-700">
-                        <p className="text-xs text-slate-600 dark:text-slate-300">{DISCLAIMER_TEXT}</p>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Account Manager Dropdown */}
-                  <div className="mb-4">
-                    <label htmlFor="selectedAccountManager" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Account Manager</label>
-                    <select
-                      id="selectedAccountManager"
-                      name="selectedAccountManager"
-                      value={selectedAccountManager}
-                      onChange={(e) => setSelectedAccountManager(e.target.value)}
-                      className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
-                    >
-                      {ACCOUNT_MANAGER_OPTIONS.map(option => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Custom Account Manager Input (Conditional) */}
-                  {selectedAccountManager === 'Custom' && (
-                    <div className="mb-4">
-                      <label htmlFor="customAccountManager" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Custom Account Manager</label>
-                      <input
-                        type="text"
-                        id="customAccountManager"
-                        name="customAccountManager"
-                        value={customAccountManager}
-                        onChange={(e) => setCustomAccountManager(e.target.value)}
-                        placeholder="Enter account manager name"
-                        className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
-                      />
-                    </div>
-                  )}
-
-                  {/* Prepared By Dropdown */}
-                  <div className="mb-4">
-                    <label htmlFor="selectedPreparedBy" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Prepared By</label>
-                    <select
-                      id="selectedPreparedBy"
-                      name="selectedPreparedBy"
-                      value={selectedPreparedBy}
-                      onChange={(e) => setSelectedPreparedBy(e.target.value)}
-                      className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
-                    >
-                      {PREPARED_BY_OPTIONS.map(option => (
-                        <option key={option} value={option}>
-                          {option}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  {/* Custom Prepared By Input (Conditional) */}
-                  {selectedPreparedBy === 'Custom' && (
-                    <div className="mb-4">
-                      <label htmlFor="customPreparedBy" className="block text-sm font-medium text-gray-700 dark:text-gray-300">Custom Prepared By</label>
-                      <input
-                        type="text"
-                        id="customPreparedBy"
-                        name="customPreparedBy"
-                        value={customPreparedBy}
-                        onChange={(e) => setCustomPreparedBy(e.target.value)}
-                        placeholder="Enter prepared by name"
-                        className="mt-1 block w-full px-3 py-2 bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm text-gray-900 dark:text-gray-100"
-                      />
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="space-y-6">
-          <h1 className="text-2xl font-bold">Custom Pricing</h1>
-
-          {quantities.filter(qObj => qObj.active).map(qObj => {
-            const q = qObj.value;
-            const res = compute(baseParams(q));
-            const { one, two, addOn } = res;
-
-            const costBreakOneWithoutSummaries = Object.fromEntries(
-              Object.entries(res.one.costBreak).filter(([key]) => key !== 'outside' && key !== 'inside')
-            );
-            const costBreakTwoWithoutSummaries = Object.fromEntries(
-              Object.entries(res.two.costBreak).filter(([key]) => key !== 'outside' && key !== 'inside')
-            );
-
-            const totalCostPerPieceOne = Object.values(costBreakOneWithoutSummaries).reduce((a, b) => a + b, 0);
-            const costBreakdownStringOne = Object.entries(costBreakOneWithoutSummaries)
-              .filter(([key, value]) => value > 0.000001)
-              .map(([key, value]) => `${key.charAt(0).toUpperCase() + key.slice(1)}: $${value.toFixed(4)}`)
-              .join(' + ');
-
-            let percentageBreakdownStringOne = '';
-            if (totalCostPerPieceOne > 0) {
-              const costPercentagesOne = Object.entries(costBreakOneWithoutSummaries)
-                .filter(([key, value]) => value > 0.000001)
-                .map(([key, value]) => ({
-                  name: key.charAt(0).toUpperCase() + key.slice(1),
-                  percentage: (value / totalCostPerPieceOne) * 100,
-                }))
-                .sort((a, b) => b.percentage - a.percentage);
-
-              percentageBreakdownStringOne = costPercentagesOne
-                .map(item => `${item.name}: ${item.percentage.toFixed(1)}%`)
-                .join(' + ');
-            }
-
-            const totalCostPerPieceTwo = Object.values(costBreakTwoWithoutSummaries).reduce((a, b) => a + b, 0);
-            const costBreakdownStringTwo = Object.entries(costBreakTwoWithoutSummaries)
-              .filter(([key, value]) => value > 0.000001)
-              .map(([key, value]) => `${key.charAt(0).toUpperCase() + key.slice(1)}: $${value.toFixed(4)}`)
-              .join(' + ');
-
-            let percentageBreakdownStringTwo = '';
-            if (totalCostPerPieceTwo > 0) {
-              const costPercentagesTwo = Object.entries(costBreakTwoWithoutSummaries)
-                .filter(([key, value]) => value > 0.000001)
-                .map(([key, value]) => ({
-                  name: key.charAt(0).toUpperCase() + key.slice(1),
-                  percentage: (value / totalCostPerPieceTwo) * 100,
-                }))
-                .sort((a, b) => b.percentage - a.percentage);
-
-              percentageBreakdownStringTwo = costPercentagesTwo
-                .map(item => `${item.name}: ${item.percentage.toFixed(1)}%`)
-                .join(' + ');
-            }
-
-            const currentParams = baseParams(q);
-            const actualMarginUsed = currentParams.useMargin ? currentParams.margin : 0;
-
-            const earningsPerPcOne = res.one.sellPc - totalCostPerPieceOne;
-            const earningsTotalOne = earningsPerPcOne * q;
-            const earningsPerPcTwo = res.two.sellPc - totalCostPerPieceTwo;
-            const earningsTotalTwo = earningsPerPcTwo * q;
-
-            const outsideCostPercentageOne = totalCostPerPieceOne > 0 ? (res.one.costBreak.outside / totalCostPerPieceOne) * 100 : 0;
-            const insideCostPercentageOne = totalCostPerPieceOne > 0 ? (res.one.costBreak.inside / totalCostPerPieceOne) * 100 : 0;
-            const outsideCostPercentageTwo = totalCostPerPieceTwo > 0 ? (res.two.costBreak.outside / totalCostPerPieceTwo) * 100 : 0;
-            const insideCostPercentageTwo = totalCostPerPieceTwo > 0 ? (res.two.costBreak.inside / totalCostPerPieceTwo) * 100 : 0;
-
-            const effectiveOverageDisplay = customOversQty !== '' && customOversQty >= 0
-              ? `${customOversQty} pcs (${res.one.effectiveOveragePercent.toFixed(1)}%)`
-              : `${res.one.effectiveOveragePercent.toFixed(1)}%`;
-
-            return (
-              <motion.div key={q} className="bg-white dark:bg-slate-800 p-6 rounded-xl shadow space-y-2" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
-                <div className="bg-indigo-500 text-white rounded-t-xl p-2 flex justify-between items-center">
-                  <h3 className="text-2xl font-bold">{q.toLocaleString()} pcs</h3>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => toggleEarnings(q)}
-                      className="px-2 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 text-sm"
-                    >
-                      {showEarnings[q] ? 'HIDE PROFITS' : 'PROFITS'}
-                    </button>
-                    <button
-                      onClick={() => toggleCosts(q)}
-                      className="px-2 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 text-sm"
-                    >
-                      {showCosts[q] ? 'HIDE COSTS' : 'COSTS'}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="p-3">
-                  <table className="w-full text-sm mb-1">
-                    <thead><tr className="text-left"><th></th><th>$ / pc</th><th>Total</th></tr></thead>
-                    <tbody>
-                      <tr><td>1-Sided</td><td>${res.one.sellPc.toFixed(3)}</td><td>${res.one.sellTotal.toFixed(2)}</td></tr>
-                      <tr><td>2-Sided</td><td>${res.two.sellPc.toFixed(3)}</td><td>${res.two.sellTotal.toFixed(2)}</td></tr>
-                    </tbody>
-                  </table>
-
-                  <p className="text-sm">2-Sided add-on: +${addOn.toFixed(3)} / pc</p>
-
-                  {showEarnings[q] && (
-                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-600">
-                      <div className="grid md:grid-cols-2 gap-4">
-                        <div>
-                          <h4 className="font-semibold text-sm mt-1">Profit Details (1-Sided):</h4>
-                          <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Margin: ${(actualMarginUsed * 100).toFixed(0)}%
-                          </p>
-                          <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Gross Profit: ${earningsTotalOne.toFixed(2)}
-                          </p>
-                          <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Profit $/pc: ${earningsPerPcOne.toFixed(3)}
-                          </p>
-                          <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Cost $/pc: ${totalCostPerPieceOne.toFixed(3)}
-                          </p>
-                        </div>
-                        <div>
-                          <h4 className="font-semibold text-sm mt-1">Profit Details (2-Sided):</h4>
-                          <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Margin: ${(actualMarginUsed * 100).toFixed(0)}%
-                          </p>
-                          <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Gross Profit: ${earningsTotalTwo.toFixed(2)}
-                          </p>
-                          <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Profit $/pc: ${earningsPerPcTwo.toFixed(3)}
-                          </p>
-                          <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Cost $/pc: ${totalCostPerPieceTwo.toFixed(3)}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {showCosts[q] && (
-                    <div className="mt-2 pt-2 border-t border-slate-200 dark:border-slate-600">
-                      <div className="grid md:grid-cols-2 gap-4">
-                        <div>
-                          <h4 className="font-semibold text-sm mt-1">Cost Details (1-Sided):</h4>
-                          <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Direct Cost (External) / pc: ${res.one.costBreak.outside.toFixed(2)}
-                          </p>
-                          <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Direct Cost (External) %: {(outsideCostPercentageOne.toFixed(2))}%
-                          </p>
-                          <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Direct Cost (Internal) / pc: ${res.one.costBreak.inside.toFixed(2)}
-                          </p>
-                          <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Direct Cost (Internal) %: {(insideCostPercentageOne.toFixed(2))}%
-                          </p>
-                          <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                            Costs / pc (1-Sided): ${costBreakdownStringOne} = ${totalCostPerPieceOne.toFixed(4)}
-                          </p>
-                          {percentageBreakdownStringOne && (
-                            <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                              Contribution: ${percentageBreakdownStringOne}
-                            </p>
-                          )}
-                          <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                            Overage: {effectiveOverageDisplay}
-                          </p>
-                        </div>
-                        <div>
-                          <h4 className="font-semibold text-sm mt-1">Cost Details (2-Sided):</h4>
-                          <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Direct Cost (External) / pc: ${res.two.costBreak.outside.toFixed(2)}
-                          </p>
-                          <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Direct Cost (External) %: {(outsideCostPercentageTwo.toFixed(2))}%
-                          </p>
-                          <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Direct Cost (Internal) / pc: ${res.two.costBreak.inside.toFixed(2)}
-                          </p>
-                          <p className="text-xs text-slate-600 dark:text-slate-400">
-                            Direct Cost (Internal) %: {(insideCostPercentageTwo.toFixed(2))}%
-                          </p>
-                          <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                            Costs / pc (2-Sided): ${costBreakdownStringTwo} = ${totalCostPerPieceTwo.toFixed(4)}
-                          </p>
-                          {percentageBreakdownStringTwo && (
-                            <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                              Contribution: ${percentageBreakdownStringTwo}
-                            </p>
-                          )}
-                          <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                            Overage: {effectiveOverageDisplay}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  <p className="text-sm font-bold text-slate-600 dark:text-slate-400 mt-2">
-                    Press-sheets incl. overage: {res.pressSheets}
-                  </p>
-                </div>
-              </motion.div>
-            );
-          })}
-
-          <div className="grid md:grid-cols-2 gap-4">
-            <div>
-              <section className="bg-white dark:bg-slate-800 rounded-xl shadow">
-                <div className="bg-indigo-500 text-white rounded-t-xl p-2">
-                  <h2 className="text-xl font-bold">Pricing Table 1-Sided</h2>
-                </div>
-                <div className="p-3">
-                  <div contentEditable className="whitespace-pre font-mono border rounded p-2 bg-white dark:bg-slate-800 shadow dark:border-slate-600" dangerouslySetInnerHTML={{ __html: fmtLines('one').replace(/\n/g, '<br/>') }}></div>
-                </div>
-              </section>
-            </div>
-            <div>
-              <section className="bg-white dark:bg-slate-800 rounded-xl shadow">
-                <div className="bg-indigo-500 text-white rounded-t-xl p-2">
-                  <h2 className="text-xl font-bold">Pricing Table 2-Sided</h2>
-                </div>
-                <div className="p-3">
-                  <div contentEditable className="whitespace-pre font-mono border rounded p-2 bg-white dark:bg-slate-800 shadow dark:border-slate-600" dangerouslySetInnerHTML={{ __html: fmtLines('two').replace(/\n/g, '<br/>') }}></div>
-                </div>
-              </section>
-            </div>
-          </div>
-
-          <div className="grid md:grid-cols-2 gap-4">
-            <div>
-              <section className="bg-white dark:bg-slate-800 rounded-xl shadow">
-                <div className="bg-indigo-500 text-white rounded-t-xl p-2">
-                  <h2 className="text-xl font-bold">Best-Price Quantities 1-Sided</h2>
-                </div>
-                <div className="p-3">
-                  <div contentEditable className="whitespace-pre font-mono border rounded p-2 bg-white dark:bg-slate-800 shadow dark:border-slate-600" dangerouslySetInnerHTML={{ __html: bestLines('one').replace(/\n/g, '<br/>') }}></div>
-                </div>
-              </section>
-            </div>
-            <div>
-              <section className="bg-white dark:bg-slate-800 rounded-xl shadow">
-                <div className="bg-indigo-500 text-white rounded-t-xl p-2">
-                  <h2 className="text-xl font-bold">Best-Price Quantities 2-Sided</h2>
-                </div>
-                <div className="p-3">
-                  <div contentEditable className="whitespace-pre font-mono border rounded p-2 bg-white dark:bg-slate-800 shadow dark:border-slate-600" dangerouslySetInnerHTML={{ __html: bestLines('two').replace(/\n/g, '<br/>') }}></div>
-                </div>
-              </section>
-            </div>
-          </div>
-
-          <div>
-            <section className="bg-white dark:bg-slate-800 rounded-xl shadow">
-              <div className="bg-indigo-500 text-white rounded-t-xl p-2">
-                <h2 className="text-xl font-bold">Low Cost Printing Pricing</h2>
-              </div>
-              <div className="p-3">
-                <div className="grid md:grid-cols-2 gap-4">
-                  <div contentEditable className="whitespace-pre font-mono border rounded p-2 bg-white dark:bg-slate-800 shadow dark:border-slate-600" dangerouslySetInnerHTML={{ __html: lowLines('one').replace(/\n/g, '<br/>') }}></div>
-                  <div contentEditable className="whitespace-pre font-mono border rounded p-2 bg-white dark:bg-slate-800 shadow dark:border-slate-600" dangerouslySetInnerHTML={{ __html: lowLines('two').replace(/\n/g, '<br/>') }}></div>
-                </div>
-              </div>
-            </section>
-          </div>
-		  
-          {/* === Add the new FinalCustomPricingTable here === */}
-          <FinalCustomPricingTable
-            finalCustomPricingOneSided={finalCustomPricingOneSided}
-            finalCustomPricingTwoSided={finalCustomPricingTwoSided}
-            onTextChange={handleFinalCustomTextChange}
-          />
-          {/* === End of FinalCustomPricingTable === */}
-		  
+    <div className="space-y-4">
+      <div className="flex flex-wrap gap-2 justify-between items-center">
+        <h1 className="text-2xl font-bold">Print Shop Quote App</h1>
+        <div className="flex gap-2">
+          <button className="px-3 py-1 rounded bg-slate-700" onClick={()=>setDarkMode(v=>!v)}>{darkMode ? 'Light' : 'Dark'} Mode</button>
+          <button className="px-3 py-1 rounded bg-slate-700" onClick={()=>setShowAdvanced(v=>!v)}>{showAdvanced ? 'Hide' : 'Show'} Advanced</button>
+          <button className="px-3 py-1 rounded bg-slate-700" onClick={()=>setShowInternal(v=>!v)}>{showInternal ? 'Hide' : 'Show'} Internal Costing</button>
         </div>
       </div>
-    </ErrorBoundary>
+
+      <div className={UI.card}>
+        <div className="flex gap-2 items-center mb-3">
+          <strong>Mode</strong>
+          <button className={`px-3 py-1 rounded ${mode==='quote'?'bg-indigo-600':'bg-slate-700'}`} onClick={()=>setMode('quote')}>Quote Mode</button>
+          <button className={`px-3 py-1 rounded ${mode==='catalog'?'bg-indigo-600':'bg-slate-700'}`} onClick={()=>setMode('catalog')}>Catalog Builder</button>
+        </div>
+        <p className="text-xs text-slate-400">Catalog mode focuses on high-volume matrix export for SustainablePrints.com ingestion.</p>
+      </div>
+
+      <section className={UI.card}>
+        <h2 className="font-semibold mb-2">Step 1 — Quote metadata + product specs</h2>
+        <div className="grid md:grid-cols-3 gap-2 mb-3">
+          <label className="text-sm">Quote ID<input className={UI.input} value={meta.quoteId} onChange={e=>setMetaField('quoteId', e.target.value)} /></label>
+          <label className="text-sm">Customer Name<input className={UI.input} value={meta.customerName} onChange={e=>setMetaField('customerName', e.target.value)} /></label>
+          <label className="text-sm">Project Name<input className={UI.input} value={meta.projectName} onChange={e=>setMetaField('projectName', e.target.value)} /></label>
+          <label className="text-sm">Description<input className={UI.input} value={meta.description} onChange={e=>setMetaField('description', e.target.value)} /></label>
+          <label className="text-sm">Quote Date<input type="date" className={UI.input} value={meta.quoteDate} onChange={e=>setMetaField('quoteDate', e.target.value)} /></label>
+          <label className="text-sm">Prepared By<input className={UI.input} value={meta.preparedBy} onChange={e=>setMetaField('preparedBy', e.target.value)} /></label>
+        </div>
+        <label className="text-sm block mb-3">Internal Notes (never in client PDF)
+          <textarea className={UI.input + ' min-h-20'} value={meta.notesInternal} onChange={e=>setMetaField('notesInternal', e.target.value)} />
+        </label>
+        <div className="grid md:grid-cols-3 gap-2">
+          <label className="text-sm">Product Type
+            <select className={UI.input} value={productType} onChange={e=>setProductType(e.target.value)}>
+              {Object.entries(APP_CONFIG.products).map(([k,v]) => <option key={k} value={k}>{v.label}</option>)}
+            </select>
+          </label>
+          <label className="text-sm">Print Sides
+            <select className={UI.input} value={specs.sides} onChange={e=>setSpecField('sides', e.target.value)}>
+              <option value="1">1-Sided</option><option value="2">2-Sided</option>
+            </select>
+          </label>
+          <label className="text-sm">Margin
+            <select className={UI.input} value={options.margin} onChange={e=>setOptions(p=>({...p, margin:Number(e.target.value)}))}>
+              {APP_CONFIG.margins.map(v => <option key={v} value={v}>{Math.round(v*100)}%</option>)}
+            </select>
+          </label>
+        </div>
+        <div className="mt-3"><DynamicProductFields /></div>
+      </section>
+
+      <section className={UI.card}>
+        <h2 className="font-semibold mb-2">Step 2 — Options + quantities</h2>
+        <div className="grid md:grid-cols-4 gap-2 mb-3">
+          <label className="text-sm">Quantity Preset
+            <select className={UI.input} value={presetType} onChange={e=>setPresetType(e.target.value)}>
+              <option value="default">Default</option><option value="short">Short run</option>
+            </select>
+          </label>
+          <label className="text-sm">Add Custom Qty
+            <div className="flex gap-2"><input type="number" className={UI.input} value={customQty} onChange={e=>setCustomQty(e.target.value)} /><button className="px-3 bg-slate-700 rounded" onClick={()=>{ const q=Number(customQty); if(q>0&&!quantities.includes(q)) setQuantities([...quantities,q].sort((a,b)=>a-b)); setCustomQty(''); }}>Add</button></div>
+          </label>
+          <label className="text-sm">Overage %<input type="number" className={UI.input} value={specs.overagePercent} onChange={e=>setSpecField('overagePercent', Number(e.target.value)||0)} /></label>
+          <label className="text-sm">Custom overage qty<input type="number" className={UI.input} value={specs.customOverageQty} onChange={e=>setSpecField('customOverageQty', Number(e.target.value)||0)} /></label>
+        </div>
+        <div className="mb-2">
+          <p className="text-sm mb-1">Paper stocks (multi-select variants)</p>
+          <div className="flex flex-wrap gap-2">
+            {stocksForProduct.map(stock => (
+              <label key={stock.id} className="px-2 py-1 rounded bg-slate-800 border border-slate-600 text-sm flex gap-2 items-center">
+                <input type="checkbox" checked={selectedStockIds.includes(stock.id)} onChange={()=>setSelectedStockIds(p=>toggleArray(p, stock.id))} />
+                {stock.label}
+              </label>
+            ))}
+          </div>
+        </div>
+        <div className="grid md:grid-cols-3 gap-2">
+          {['includePrint','includeDie','includeGlue','includePrepress','includeHandling','useMargin'].map(key => (
+            <label key={key} className="text-sm flex items-center gap-2"><input type="checkbox" checked={options[key]} onChange={e=>setOptions(p=>({...p,[key]:e.target.checked}))} />{key}</label>
+          ))}
+        </div>
+        {showAdvanced && (
+          <div className="mt-3 grid md:grid-cols-4 gap-2 border-t border-slate-700 pt-3">
+            <label className="text-sm">UP<input type="number" className={UI.input} value={specs.up} onChange={e=>setSpecField('up', Number(e.target.value)||1)} /></label>
+            <label className="text-sm">OUT<input type="number" className={UI.input} value={specs.out} onChange={e=>setSpecField('out', Number(e.target.value)||1)} /></label>
+            <label className="text-sm">Die machine
+              <select className={UI.input} value={specs.dieMachine} onChange={e=>setSpecField('dieMachine', e.target.value)}>{Object.entries(APP_CONFIG.dieMachines).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}</select>
+            </label>
+            <label className="text-sm">Glue mode
+              <select className={UI.input} value={specs.glueMode} onChange={e=>setSpecField('glueMode', e.target.value)}><option>Fast</option><option>Slow</option><option>Complex</option><option>Standard</option></select>
+            </label>
+          </div>
+        )}
+
+        <div className="mt-3">
+          <p className="text-sm mb-1">Finishes / add-ons</p>
+          <div className="flex flex-wrap gap-2">
+            {Object.entries(APP_CONFIG.addOns).map(([k,v]) => (
+              <label key={k} className="px-2 py-1 rounded bg-slate-800 border border-slate-600 text-sm flex items-center gap-2">
+                <input type="checkbox" checked={options.selectedAddOns.includes(k)} onChange={()=>setOptions(p=>({...p, selectedAddOns: toggleArray(p.selectedAddOns, k)}))} />
+                {v.label}
+              </label>
+            ))}
+          </div>
+        </div>
+      </section>
+
+      <section className={UI.card}>
+        <h2 className="font-semibold mb-2">Step 3 — Review + compare variants</h2>
+        {validationWarnings.length > 0 && <div className="mb-3 rounded border border-amber-500 bg-amber-950 p-2 text-amber-200 text-sm">{validationWarnings.map(w => <div key={w}>• {w}</div>)}</div>}
+        <div className="grid lg:grid-cols-2 gap-3">
+          {matrix.map(variant => (
+            <div key={variant.variantKey} className="rounded border border-slate-700 overflow-hidden">
+              <div className="px-3 py-2 bg-slate-800 flex justify-between items-center">
+                <strong>{variant.stock.label}</strong>
+                <label className="text-xs flex items-center gap-2"><input type="checkbox" checked={selectedClientVariants.includes(variant.variantKey)} onChange={()=>setSelectedClientVariants(p=>toggleArray(p, variant.variantKey))} />Include variant in client PDF</label>
+              </div>
+              <table className="w-full text-sm">
+                <thead className="bg-slate-900"><tr><th className="p-2 text-left">Use</th><th>Qty</th><th>Price/pc</th><th>Total</th>{showInternal && <th>Internal</th>}</tr></thead>
+                <tbody>
+                  {variant.rows.map(row => {
+                    const checked = (selectedRows[variant.variantKey] || []).includes(row.qty);
+                    return (
+                      <tr key={row.qty} className="border-t border-slate-800">
+                        <td className="p-2"><input type="checkbox" checked={checked} onChange={()=>setSelectedRows(prev => ({...prev, [variant.variantKey]: toggleArray(prev[variant.variantKey] || [], row.qty)}))} /></td>
+                        <td>{row.qty.toLocaleString()}</td>
+                        <td>{toUnit(row.priceEach)}</td>
+                        <td>{toMoney(row.totalPrice)}</td>
+                        {showInternal && <td className="text-xs text-slate-400">{toMoney(roundByPolicy(row.internal.internalCost, 2, 'nearest'))}</td>}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className={UI.card}>
+        <h2 className="font-semibold mb-2">Step 4 — Final selection + outputs</h2>
+        <div className="flex flex-wrap gap-2">
+          <button className="px-3 py-1 rounded bg-indigo-600" onClick={generateClientPDF}>Client Quote PDF</button>
+          <button className="px-3 py-1 rounded bg-slate-700" onClick={copyClientMatrix}>Copy selected matrix</button>
+          <button className="px-3 py-1 rounded bg-slate-700" onClick={exportQuoteJSON}>Export quote JSON</button>
+          <label className="px-3 py-1 rounded bg-slate-700 cursor-pointer">Load quote JSON<input type="file" accept="application/json" className="hidden" onChange={handleQuoteLoad} /></label>
+          <button className="px-3 py-1 rounded bg-slate-700" onClick={exportMatrixJSON}>Export matrix JSON</button>
+          <button className="px-3 py-1 rounded bg-slate-700" onClick={exportMatrixCSV}>Export matrix CSV</button>
+        </div>
+        <p className="text-xs text-slate-400 mt-2">Client outputs intentionally exclude margin, cost breakdowns, and internal notes.</p>
+      </section>
+    </div>
   );
 }
 
-/* ===== MOUNT ===== */
-try {
-  ReactDOM.createRoot(document.getElementById('root')).render(<App />);
-  document.getElementById('fallback').style.display = 'none';
-} catch (e) {
-  console.error('Failed to mount React app:', e);
-  document.getElementById('fallback').style.display = 'block';
+function boot() {
+  const root = document.getElementById('root');
+  ReactDOM.createRoot(root).render(<App />);
 }
+window.addEventListener('load', boot);
   </script>
 </body>
 </html>
-
-<!-- [end of Hemp Press Packaging Quote App_02162026.html] -->
